@@ -1,54 +1,37 @@
 //! SG Bus Ready — Slint desktop spike. Renders core `ServiceArrivals` for one
 //! stop. Uses a fixed sample now; swap in `fetch_arrivals` once a key exists.
 
-// Slint-generated code (`slint::include_modules!`) emits constructs that trigger
-// workspace lints — allow them here so the generator output compiles cleanly.
-#![allow(
-    trivial_numeric_casts,
-    reason = "Slint-generated code contains unavoidable trivial casts"
-)]
-#![allow(
-    missing_debug_implementations,
-    reason = "Slint-generated types do not derive Debug"
-)]
-#![allow(
-    clippy::unwrap_used,
-    reason = "Slint-generated code uses unwrap internally"
-)]
-#![allow(
-    clippy::expect_used,
-    reason = "Slint-generated code uses expect internally"
-)]
-#![allow(
-    clippy::panic,
-    reason = "Slint-generated code uses panic internally"
-)]
-#![allow(
-    clippy::indexing_slicing,
-    reason = "Slint-generated code uses indexing internally"
-)]
-#![allow(
-    clippy::float_arithmetic,
-    reason = "Slint-generated code uses float arithmetic internally"
-)]
-#![allow(
-    clippy::semicolon_outside_block,
-    reason = "Slint-generated code formatting"
-)]
-#![allow(
-    clippy::clone_on_ref_ptr,
-    reason = "Slint-generated code clones ref-counted pointers"
-)]
-#![allow(
-    clippy::todo,
-    reason = "Slint-generated code may contain todo! stubs"
-)]
+mod generated {
+    #![allow(trivial_numeric_casts, reason = "Slint-generated code")]
+    #![allow(
+        missing_debug_implementations,
+        reason = "Slint-generated types do not derive Debug"
+    )]
+    #![allow(clippy::unwrap_used, reason = "Slint-generated code uses unwrap internally")]
+    #![allow(clippy::expect_used, reason = "Slint-generated code uses expect internally")]
+    #![allow(clippy::panic, reason = "Slint-generated code uses panic internally")]
+    #![allow(
+        clippy::indexing_slicing,
+        reason = "Slint-generated code uses indexing internally"
+    )]
+    #![allow(
+        clippy::float_arithmetic,
+        reason = "Slint-generated code uses float arithmetic internally"
+    )]
+    #![allow(clippy::semicolon_outside_block, reason = "Slint-generated code formatting")]
+    #![allow(
+        clippy::clone_on_ref_ptr,
+        reason = "Slint-generated code clones ref-counted pointers"
+    )]
+    #![allow(clippy::todo, reason = "Slint-generated code contains todo! stubs")]
+    slint::include_modules!();
+}
 
-slint::include_modules!();
+use generated::{AppWindow, ServiceRow};
 
 use sgbr_core::lta::arrival::{service_arrivals, ServiceArrivals};
 use sgbr_core::lta::model::BusArrivalResponse;
-use slint::{ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 const SAMPLE: &str = r#"{
   "BusStopCode": "83139",
