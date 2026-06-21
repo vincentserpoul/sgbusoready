@@ -48,6 +48,11 @@ name = "sgbusoready"
 version = "0.1.0"
 edition = "2024"
 
+# `rlib` lets `main.rs` call the shared library; `cdylib` is what cargo-apk
+# packages for Android (the `android_main` entry lives in `src/lib.rs`).
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [lints]
 workspace = true
 
