@@ -1,0 +1,18 @@
+# cargo-vet supply-chain configuration.
+# https://mozilla.github.io/cargo-vet/
+#
+# Trusted public audit registries. Run `cargo vet` to check the dependency
+# tree against them; `cargo vet certify` to record your own audits. The store
+# fills in (audits.toml / imports.lock) once a real dependency tree exists.
+
+[imports.bytecodealliance]
+url = "https://raw.githubusercontent.com/bytecodealliance/wasmtime/main/supply-chain/audits.toml"
+
+[imports.google]
+url = "https://raw.githubusercontent.com/google/supply-chain/main/audits.toml"
+
+[imports.mozilla]
+url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
+
+[imports.embark]
+url = "https://raw.githubusercontent.com/EmbarkStudios/rust-ecosystem/main/audits.toml"

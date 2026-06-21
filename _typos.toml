@@ -1,0 +1,8 @@
+# typos configuration — https://github.com/crate-ci/typos
+
+[files]
+extend-exclude = []
+
+[default.extend-identifiers]
+
+[default.extend-words]

@@ -1,0 +1,8 @@
+/target
+/coverage
+/.bin
+
+# Local secrets — the LTA DataMall AccountKey must never be committed.
+*.secret
+.env
+.env.*

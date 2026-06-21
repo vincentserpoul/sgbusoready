@@ -1,0 +1,213 @@
+# =============================================================================
+# SG Bus Ready — workspace root
+#
+# Quality bar ported from the `youtun4` project. The workspace [lints] table is
+# the single source of truth; every crate opts in with `[lints] workspace = true`.
+#
+# Architecture note (see docs/superpowers/specs): pure-Rust core + Slint UI keep
+# `unsafe_code = "deny"`. The platform bridge crates (JNI on Android, Obj-C on
+# iOS) will override `unsafe_code` locally and remain bound by
+# `undocumented_unsafe_blocks` — unsafe is allowed ONLY where the OS forces it,
+# and only with a documented safety comment.
+# =============================================================================
+
+# Single-package workspace for now. The implementation plan splits this into
+# crates/sgbr-core (logic), crates/sgbr-ui (Slint) and the platform bridges;
+# the [workspace.lints] table below already governs all of them.
+[workspace]
+resolver = "3"
+
+[workspace.dependencies]
+# Shared across crates — extended as the implementation plan lands.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+
+# Pinned dev-tool versions (informational; CI installs via taiki-e/install-action).
+[workspace.metadata.tools]
+cargo-audit = "0.22.1"
+cargo-deny = "0.19.0"
+cargo-llvm-cov = "0.8.4"
+cargo-machete = "0.9.1"
+cargo-nextest = "0.9.127"
+cargo-vet = "0.10.2"
+
+# cargo-vet supply-chain security store.
+[workspace.metadata.vet]
+store = { path = ".supply-chain" }
+
+[package]
+name = "sgbusoready"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+
+# -----------------------------------------------------------------------------
+# Profiles (ported from youtun4)
+# -----------------------------------------------------------------------------
+[profile.dev]
+opt-level = 0
+debug = false # Improves compile times
+debug-assertions = false
+overflow-checks = true
+strip = "debuginfo" # Improves compile times
+lto = false
+panic = "unwind"
+incremental = true
+codegen-units = 256
+
+[profile.test]
+opt-level = 0
+debug = true
+debug-assertions = true
+overflow-checks = true
+strip = false
+lto = false
+incremental = true
+codegen-units = 256
+
+[profile.release]
+opt-level = 3
+debug = false
+debug-assertions = false
+overflow-checks = false
+lto = "thin"
+strip = "symbols"
+panic = "abort"
+incremental = false
+codegen-units = 4
+
+[profile.release-debugging]
+inherits = "release"
+incremental = true
+debug = "full"
+strip = false
+lto = false
+
+# -----------------------------------------------------------------------------
+# Workspace lints — ported verbatim from youtun4, with `unsafe_code` kept as a
+# workspace default of `deny` (bridge crates override locally).
+# Inherit per crate with: [lints] workspace = true
+# -----------------------------------------------------------------------------
+[workspace.lints.rust]
+unsafe_code = "deny"
+warnings = "deny"
+unused_must_use = "deny"
+unreachable_code = "deny"
+unused_imports = "warn"
+ambiguous_negative_literals = "warn"
+missing_debug_implementations = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_lifetimes = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+# nursery = { level = "warn", priority = -1 }  # optional, might cause more false positives
+
+# --- Security / Correctness (deny) ---
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+todo = "warn"
+fallible_impl_from = "deny"
+cast_possible_truncation = "deny"
+cast_sign_loss = "deny"
+cast_precision_loss = "deny"
+float_arithmetic = "deny"
+indexing_slicing = "deny"
+
+# --- Compliance / Auditability ---
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro = "deny"
+
+# --- Code quality (warn) ---
+cognitive_complexity = { level = "warn", priority = 0 }
+missing_const_for_fn = "warn"
+redundant_pub_crate = "warn"
+use_self = "warn"
+wildcard_enum_match_arm = "warn"
+single_match_else = "warn"
+doc_markdown = "warn"
+needless_raw_string_hashes = "warn"
+redundant_clone = "warn"
+
+# --- Allowed (too noisy or false positives) ---
+cargo_common_metadata = "allow" # Internal crates, not published to crates.io
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+missing_docs_in_private_items = "allow"
+blanket_clippy_restriction_lints = "allow"
+implicit_return = "allow"
+question_mark_used = "allow"
+single_call_fn = "allow"
+min_ident_chars = "allow"
+pub_with_shorthand = "allow"
+separated_literal_suffix = "allow"
+self_named_module_files = "allow"
+mod_module_files = "allow"
+multiple_crate_versions = "allow"
+std_instead_of_core = "allow"
+std_instead_of_alloc = "allow"
+exhaustive_enums = "allow"
+exhaustive_structs = "allow"
+as_conversions = "allow"
+pattern_type_mismatch = "allow"
+ref_patterns = "allow"
+pub_use = "allow"
+absolute_paths = "allow"
+return_self_not_must_use = "allow"
+wildcard_in_or_patterns = "allow"
+significant_drop_tightening = "allow"
+too_many_arguments = "allow"
+too_many_lines = "allow"
+option_if_let_else = "allow"
+match_same_arms = "allow"
+match_wildcard_for_single_variants = "allow"
+
+# These lints are from the `restriction` lint group and prevent specific
+# constructs being used in source code in order to drive up consistency,
+# quality, and brevity
+allow_attributes_without_reason = "warn"
+as_pointer_underscore = "warn"
+assertions_on_result_states = "warn"
+clone_on_ref_ptr = "warn"
+deref_by_slicing = "warn"
+disallowed_script_idents = "warn"
+empty_drop = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+fn_to_numeric_cast_any = "warn"
+if_then_some_else_none = "warn"
+map_err_ignore = "warn"
+redundant_type_annotations = "warn"
+renamed_function_params = "warn"
+semicolon_outside_block = "warn"
+# string_to_string removed in recent clippy — implicit_clone covers it
+undocumented_unsafe_blocks = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+unneeded_field_pattern = "warn"
+unused_result_ok = "warn"
+
+# May cause issues with structured logging otherwise.
+literal_string_with_formatting_args = "allow"

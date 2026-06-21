@@ -1,0 +1,22 @@
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+#
+# Detects secrets, API keys, passwords in code.
+#
+# NOTE: the LTA DataMall AccountKey will be embedded in the app for the MVP
+# (no backend). Keep the real key OUT of git — load it from an untracked file
+# or build-time env, never hard-coded — so this scanner stays meaningful.
+
+title = "sgbusoready gitleaks config"
+
+[extend]
+# Use the default gitleaks config as base
+useDefault = true
+
+# Paths to ignore (build artifacts, lockfiles)
+[allowlist]
+paths = [
+  '''target/''',
+  '''\.git/''',
+  '''Cargo\.lock''',
+]
