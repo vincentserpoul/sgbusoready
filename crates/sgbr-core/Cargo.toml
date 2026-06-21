@@ -1,0 +1,17 @@
+[package]
+name = "sgbr-core"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+ureq = { workspace = true }
+
+[dev-dependencies]
+time = { workspace = true }

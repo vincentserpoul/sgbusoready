@@ -16,6 +16,7 @@
 # the [workspace.lints] table below already governs all of them.
 [workspace]
 resolver = "3"
+members = ["crates/sgbr-core"]
 
 [workspace.dependencies]
 # Shared across crates — extended as the implementation plan lands.
@@ -23,6 +24,11 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
+time = { version = "0.3", features = ["parsing", "formatting", "macros"] }
+ureq = { version = "3.0", features = ["json"] }
+
+# Internal crates
+sgbr-core = { version = "0.1.0", path = "crates/sgbr-core" }
 
 # Pinned dev-tool versions (informational; CI installs via taiki-e/install-action).
 [workspace.metadata.tools]
