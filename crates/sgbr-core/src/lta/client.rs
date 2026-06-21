@@ -11,8 +11,7 @@ use crate::lta::model::BusArrivalResponse;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Base URL for the Bus Arrival v2 endpoint (no query string).
-pub const BUS_ARRIVAL_URL: &str =
-    "https://datamall2.mytransport.sg/ltaodataservice/BusArrivalv2";
+pub const BUS_ARRIVAL_URL: &str = "https://datamall2.mytransport.sg/ltaodataservice/BusArrivalv2";
 
 /// Build the full request URL for a given stop code.
 #[must_use]
@@ -51,7 +50,7 @@ pub fn fetch_arrivals(
 
 #[cfg(test)]
 mod tests {
-    use super::{arrival_url, BUS_ARRIVAL_URL};
+    use super::{BUS_ARRIVAL_URL, arrival_url};
 
     #[test]
     fn builds_query_url() {

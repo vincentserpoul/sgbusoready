@@ -12,10 +12,7 @@ use crate::lta::model::BusArrivalResponse;
 /// [`CoreError::InvalidTimestamp`] for a non-RFC3339 value. A bus already due
 /// or just departed yields `0` or a negative number; the caller decides how to
 /// present that.
-pub fn minutes_until(
-    estimated_arrival: &str,
-    now: OffsetDateTime,
-) -> Result<i64, CoreError> {
+pub fn minutes_until(estimated_arrival: &str, now: OffsetDateTime) -> Result<i64, CoreError> {
     if estimated_arrival.is_empty() {
         return Err(CoreError::NoArrival);
     }
@@ -68,8 +65,7 @@ mod tests {
     #[test]
     fn computes_future_minutes() {
         let now = datetime!(2026-06-21 08:10:00 +8);
-        let mins = minutes_until("2026-06-21T08:18:00+08:00", now)
-            .expect("valid future arrival");
+        let mins = minutes_until("2026-06-21T08:18:00+08:00", now).expect("valid future arrival");
         assert_eq!(mins, 8);
     }
 
@@ -77,8 +73,7 @@ mod tests {
     fn truncates_to_whole_minutes() {
         let now = datetime!(2026-06-21 08:10:00 +8);
         // 8m30s away -> 8 whole minutes.
-        let mins = minutes_until("2026-06-21T08:18:30+08:00", now)
-            .expect("valid arrival");
+        let mins = minutes_until("2026-06-21T08:18:30+08:00", now).expect("valid arrival");
         assert_eq!(mins, 8);
     }
 
@@ -87,8 +82,7 @@ mod tests {
         // now expressed in +08:00; arrival expressed in UTC for the same wall
         // clock instant 08:18 SGT == 00:18 UTC.
         let now = datetime!(2026-06-21 08:10:00 +8);
-        let mins = minutes_until("2026-06-21T00:18:00+00:00", now)
-            .expect("valid arrival");
+        let mins = minutes_until("2026-06-21T00:18:00+00:00", now).expect("valid arrival");
         assert_eq!(mins, 8);
     }
 
@@ -109,15 +103,14 @@ mod tests {
     #[test]
     fn past_arrival_is_negative() {
         let now = datetime!(2026-06-21 08:20:00 +8);
-        let mins = minutes_until("2026-06-21T08:18:00+08:00", now)
-            .expect("valid past arrival");
+        let mins = minutes_until("2026-06-21T08:18:00+08:00", now).expect("valid past arrival");
         assert_eq!(mins, -2);
     }
 }
 
 #[cfg(test)]
 mod view_model_tests {
-    use super::{service_arrivals, ServiceArrivals};
+    use super::{ServiceArrivals, service_arrivals};
     use crate::lta::model::BusArrivalResponse;
     use time::macros::datetime;
 
@@ -135,8 +128,7 @@ mod view_model_tests {
 
     #[test]
     fn drops_empty_slots_and_keeps_order() {
-        let resp: BusArrivalResponse =
-            serde_json::from_str(SAMPLE).expect("parse");
+        let resp: BusArrivalResponse = serde_json::from_str(SAMPLE).expect("parse");
         let now = datetime!(2026-06-21 08:10:00 +8);
         let out = service_arrivals(&resp, now);
         assert_eq!(
@@ -167,8 +159,7 @@ mod view_model_tests {
             }
           ]
         }"#;
-        let resp: BusArrivalResponse =
-            serde_json::from_str(TWO_SERVICES).expect("parse");
+        let resp: BusArrivalResponse = serde_json::from_str(TWO_SERVICES).expect("parse");
         let now = datetime!(2026-06-21 08:10:00 +8);
         let out = service_arrivals(&resp, now);
         assert_eq!(out.len(), 2);
@@ -202,8 +193,7 @@ mod view_model_tests {
             }
           ]
         }"#;
-        let resp: BusArrivalResponse =
-            serde_json::from_str(ALL_EMPTY).expect("parse");
+        let resp: BusArrivalResponse = serde_json::from_str(ALL_EMPTY).expect("parse");
         let now = datetime!(2026-06-21 08:10:00 +8);
         let out = service_arrivals(&resp, now);
         assert_eq!(

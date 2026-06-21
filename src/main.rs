@@ -7,8 +7,14 @@ mod generated {
         missing_debug_implementations,
         reason = "Slint-generated types do not derive Debug"
     )]
-    #![allow(clippy::unwrap_used, reason = "Slint-generated code uses unwrap internally")]
-    #![allow(clippy::expect_used, reason = "Slint-generated code uses expect internally")]
+    #![allow(
+        clippy::unwrap_used,
+        reason = "Slint-generated code uses unwrap internally"
+    )]
+    #![allow(
+        clippy::expect_used,
+        reason = "Slint-generated code uses expect internally"
+    )]
     #![allow(clippy::panic, reason = "Slint-generated code uses panic internally")]
     #![allow(
         clippy::indexing_slicing,
@@ -18,7 +24,10 @@ mod generated {
         clippy::float_arithmetic,
         reason = "Slint-generated code uses float arithmetic internally"
     )]
-    #![allow(clippy::semicolon_outside_block, reason = "Slint-generated code formatting")]
+    #![allow(
+        clippy::semicolon_outside_block,
+        reason = "Slint-generated code formatting"
+    )]
     #![allow(
         clippy::clone_on_ref_ptr,
         reason = "Slint-generated code clones ref-counted pointers"
@@ -29,7 +38,7 @@ mod generated {
 
 use generated::{AppWindow, ServiceRow};
 
-use sgbr_core::lta::arrival::{service_arrivals, ServiceArrivals};
+use sgbr_core::lta::arrival::{ServiceArrivals, service_arrivals};
 use sgbr_core::lta::model::BusArrivalResponse;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
@@ -50,7 +59,13 @@ fn timing_label(arrivals: &ServiceArrivals) -> String {
     arrivals
         .minutes
         .iter()
-        .map(|m| if *m <= 0 { "Arr".to_owned() } else { format!("{m} min") })
+        .map(|m| {
+            if *m <= 0 {
+                "Arr".to_owned()
+            } else {
+                format!("{m} min")
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -58,11 +73,10 @@ fn timing_label(arrivals: &ServiceArrivals) -> String {
 fn main() -> Result<(), slint::PlatformError> {
     // Fixed reference time so the sample always shows positive countdowns.
     let now = time::macros::datetime!(2026-06-21 08:10:00 +8);
-    let response: BusArrivalResponse =
-        serde_json::from_str(SAMPLE).unwrap_or(BusArrivalResponse {
-            bus_stop_code: String::new(),
-            services: Vec::new(),
-        });
+    let response: BusArrivalResponse = serde_json::from_str(SAMPLE).unwrap_or(BusArrivalResponse {
+        bus_stop_code: String::new(),
+        services: Vec::new(),
+    });
 
     let rows: Vec<ServiceRow> = service_arrivals(&response, now)
         .iter()

@@ -67,8 +67,7 @@ mod tests {
 
     #[test]
     fn parses_sample_response() {
-        let parsed: BusArrivalResponse =
-            serde_json::from_str(SAMPLE).expect("sample should parse");
+        let parsed: BusArrivalResponse = serde_json::from_str(SAMPLE).expect("sample should parse");
         assert_eq!(parsed.bus_stop_code, "83139");
         assert_eq!(parsed.services.len(), 1);
         let svc = parsed.services.first().expect("one service");
