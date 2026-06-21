@@ -72,11 +72,16 @@ slint-build = "1.15"
 slint = { version = "1.15", features = ["backend-android-activity-06"] }
 
 # cargo-apk manifest metadata (no INTERNET permission yet — fixed sample only).
+# NOTE: min/target_sdk_version MUST live under [...android.sdk] — cargo-apk
+# flattens them into ndk-build's Sdk struct; placed directly under
+# [package.metadata.android] they are silently ignored and target defaults to 30.
 [package.metadata.android]
 package = "com.serpoul.sgbusready"
 build_targets = ["aarch64-linux-android"]
+
+[package.metadata.android.sdk]
 min_sdk_version = 24
-target_sdk_version = 34
+target_sdk_version = 35
 
 [package.metadata.android.application]
 label = "SG Bus Ready"

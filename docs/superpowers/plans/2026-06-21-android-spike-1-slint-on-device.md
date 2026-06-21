@@ -323,3 +323,32 @@ If it works: Android Spike #1 is GREEN — Slint renders on the real device. Pro
 **Type/structure consistency:** `run_app()` defined in `src/lib.rs` (Task 1) is called by both `main.rs` (Task 1 Step 3) and `android_main` (Task 2 Step 1). The `mod generated` + `ServiceRow`/`AppWindow`/`timing_label` move wholesale from `main.rs` to `lib.rs`, preserving the lint-scoping fix from the previous branch. Crate name `sgbusoready` → library path `sgbusoready::run_app` is correct (hyphen→nothing; the package name has no hyphen). ✅
 
 **Execution note:** Tasks 1–2 are dev-machine-verifiable (desktop build/clippy/test/fmt) and suit autonomous or paired execution. Tasks 0, 3, 4 need the NDK + the physical phone and must be run with the user. Recommend executing this plan **interactively** rather than dispatching subagents.
+
+---
+
+## Appendix — Real build gotchas (Arch + AUR Android SDK, NDK r29)
+
+Encountered while building the APK on 2026-06-21. None were app-code issues; all were SDK/cargo-apk environment quirks. `cargo-apk` is `0.10.0` (uses `ndk-build 0.10.0`).
+
+1. **Env not visible to non-interactive shells.** Put `ANDROID_HOME` and `ANDROID_NDK_ROOT` in `~/.zshenv` (not `~/.zshrc`). Build env used:
+   `ANDROID_HOME=$HOME/.android-sdk-shim` (see #2), `ANDROID_NDK_ROOT=/opt/android-ndk`.
+
+2. **AUR platform dir is named `android-37.0`** (non-integer suffix) and is API 37. `ndk-build` only parses integer `android-<N>` dir names, and the SDK lives in `/opt` (root-owned). Workaround: a **user-local SDK shim** that symlinks the real `/opt/android-sdk` pieces but exposes the platform under an in-range integer name:
+   ```bash
+   SHIM="$HOME/.android-sdk-shim"; mkdir -p "$SHIM/platforms"
+   for s in build-tools platform-tools tools ndk; do ln -s "/opt/android-sdk/$s" "$SHIM/$s"; done
+   ln -s "/opt/android-sdk/platforms/android-37.0" "$SHIM/platforms/android-35"
+   export ANDROID_HOME="$SHIM"
+   ```
+
+3. **NDK r29 supports platform levels 21–35** (`$ANDROID_NDK_ROOT/build/core/platforms.mk`), but the SDK platform is API 37 — out of range, so it's filtered out. Hence exposing it as `android-35` in the shim (the API-37 `android.jar` works fine relabeled; it's only used for resource linking).
+
+4. **`min/target_sdk_version` must be under `[package.metadata.android.sdk]`** — cargo-apk flattens them into ndk-build's `Sdk` struct. Placed directly under `[package.metadata.android]` they are silently ignored, and `target_sdk_version` then defaults to `highest_supported_platform().min(30)` → tries `android-30`, which isn't installed → `Platform 30 is not installed`. The committed manifest now uses the `.sdk` sub-table with `target_sdk_version = 35`.
+
+**Build command (with the shim env exported):**
+```bash
+cargo apk build --lib --target aarch64-linux-android
+# → target/debug/apk/sgbusoready.apk  (debug-signed, arm64-v8a)
+```
+
+**Cleaner long-term fix (avoids the shim):** install a standard SDK platform whose API level is within the NDK's range (e.g. `sdkmanager "platforms;android-35"`) via Google's cmdline-tools, rather than the AUR `android-platform` package — then `ANDROID_HOME` can point straight at the real SDK.
