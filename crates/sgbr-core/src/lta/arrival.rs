@@ -147,4 +147,71 @@ mod view_model_tests {
             }]
         );
     }
+
+    #[test]
+    fn two_services_preserved_in_order() {
+        const TWO_SERVICES: &str = r#"{
+          "BusStopCode": "83139",
+          "Services": [
+            {
+              "ServiceNo": "15",
+              "NextBus":  { "EstimatedArrival": "2026-06-21T08:18:00+08:00" },
+              "NextBus2": { "EstimatedArrival": "" },
+              "NextBus3": { "EstimatedArrival": "" }
+            },
+            {
+              "ServiceNo": "65",
+              "NextBus":  { "EstimatedArrival": "2026-06-21T08:22:00+08:00" },
+              "NextBus2": { "EstimatedArrival": "2026-06-21T08:30:00+08:00" },
+              "NextBus3": { "EstimatedArrival": "" }
+            }
+          ]
+        }"#;
+        let resp: BusArrivalResponse =
+            serde_json::from_str(TWO_SERVICES).expect("parse");
+        let now = datetime!(2026-06-21 08:10:00 +8);
+        let out = service_arrivals(&resp, now);
+        assert_eq!(out.len(), 2);
+        let mut iter = out.into_iter();
+        assert_eq!(
+            iter.next().expect("first service"),
+            ServiceArrivals {
+                service_no: "15".to_owned(),
+                minutes: vec![8],
+            }
+        );
+        assert_eq!(
+            iter.next().expect("second service"),
+            ServiceArrivals {
+                service_no: "65".to_owned(),
+                minutes: vec![12, 20],
+            }
+        );
+    }
+
+    #[test]
+    fn all_empty_slots_yields_empty_minutes() {
+        const ALL_EMPTY: &str = r#"{
+          "BusStopCode": "83139",
+          "Services": [
+            {
+              "ServiceNo": "99",
+              "NextBus":  { "EstimatedArrival": "" },
+              "NextBus2": { "EstimatedArrival": "" },
+              "NextBus3": { "EstimatedArrival": "" }
+            }
+          ]
+        }"#;
+        let resp: BusArrivalResponse =
+            serde_json::from_str(ALL_EMPTY).expect("parse");
+        let now = datetime!(2026-06-21 08:10:00 +8);
+        let out = service_arrivals(&resp, now);
+        assert_eq!(
+            out,
+            vec![ServiceArrivals {
+                service_no: "99".to_owned(),
+                minutes: vec![],
+            }]
+        );
+    }
 }

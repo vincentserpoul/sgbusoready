@@ -16,6 +16,14 @@ pub struct BusArrivalResponse {
 }
 
 /// Arrival info for a single bus service at the stop.
+///
+/// # `NextBus` coupling
+/// `DataMall` sends exactly three `NextBus` fields (`NextBus`, `NextBus2`,
+/// `NextBus3`). The `service_arrivals` function in `arrival.rs` mirrors this
+/// with a fixed 3-element slot array `[&svc.next_bus, &svc.next_bus2,
+/// &svc.next_bus3]`. If the API ever gains a fourth bus (`NextBus4`), add a
+/// `next_bus4` field here **and** extend that slot array in
+/// `arrival.rs::service_arrivals` to keep both sides in sync.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Service {
     /// The public service number, e.g. `"15"` or `"67"`.
