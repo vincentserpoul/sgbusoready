@@ -1,0 +1,25 @@
+struct ServiceRow {
+    service_no: string,
+    timing: string,
+}
+
+export component AppWindow inherits Window {
+    in property <[ServiceRow]> rows;
+    title: "SG Bus Ready — spike";
+    preferred-width: 320px;
+    preferred-height: 400px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+        Text {
+            text: "Stop 83139";
+            font-size: 20px;
+            font-weight: 700;
+        }
+        for row in root.rows: HorizontalLayout {
+            Text { text: row.service_no; font-weight: 600; width: 64px; }
+            Text { text: row.timing; }
+        }
+    }
+}
