@@ -94,3 +94,18 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
     window.set_rows(ModelRc::new(VecModel::from(rows)));
     window.run()
 }
+
+/// Android entry point. `cargo-apk`'s NativeActivity glue calls this; we hand
+/// the `AndroidApp` to Slint's backend, then run the shared UI.
+#[cfg(target_os = "android")]
+#[allow(
+    unsafe_code,
+    reason = "Android requires a #[no_mangle] entry; this is the sole unsafe surface, per the platform-bridge exception in the design doc"
+)]
+#[unsafe(no_mangle)]
+fn android_main(app: slint::android::AndroidApp) {
+    if slint::android::init(app).is_err() {
+        return;
+    }
+    let _ = run_app();
+}

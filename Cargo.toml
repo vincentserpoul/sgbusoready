@@ -65,6 +65,22 @@ serde_json = { workspace = true }
 [build-dependencies]
 slint-build = "1.15"
 
+# Android-only: turn on Slint's android-activity backend. The desktop `slint`
+# dep above is untouched. If the Android build reports conflicting backends,
+# switch the base dep to default-features=false and select backends per target.
+[target.'cfg(target_os = "android")'.dependencies]
+slint = { version = "1.15", features = ["backend-android-activity-06"] }
+
+# cargo-apk manifest metadata (no INTERNET permission yet — fixed sample only).
+[package.metadata.android]
+package = "com.serpoul.sgbusready"
+build_targets = ["aarch64-linux-android"]
+min_sdk_version = 24
+target_sdk_version = 34
+
+[package.metadata.android.application]
+label = "SG Bus Ready"
+
 # -----------------------------------------------------------------------------
 # Profiles (ported from youtun4)
 # -----------------------------------------------------------------------------
