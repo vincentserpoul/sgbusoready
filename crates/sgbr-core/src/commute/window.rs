@@ -160,7 +160,10 @@ mod tests {
     fn current_window_end_none_when_inactive() {
         // Monday 07:00 -> not active -> no current window.
         let c = mon_fri_8_to_9();
-        assert_eq!(c.current_window_end(datetime!(2026-06-22 07:00:00 +8)), None);
+        assert_eq!(
+            c.current_window_end(datetime!(2026-06-22 07:00:00 +8)),
+            None
+        );
     }
 
     #[test]

@@ -43,8 +43,14 @@ mod tests {
             "67",
             "84009",
             Weekdays::from_days(&[Monday, Tuesday]),
-            TimeOfDay { hour: 18, minute: 0 },
-            TimeOfDay { hour: 19, minute: 0 },
+            TimeOfDay {
+                hour: 18,
+                minute: 0,
+            },
+            TimeOfDay {
+                hour: 19,
+                minute: 0,
+            },
             None,
         )
         .expect("valid commute")
@@ -91,6 +97,9 @@ mod tests {
     #[test]
     fn next_alarm_empty_list_is_none() {
         let list: Vec<Commute> = vec![];
-        assert_eq!(next_alarm_at(&list, datetime!(2026-06-22 08:30:00 +8)), None);
+        assert_eq!(
+            next_alarm_at(&list, datetime!(2026-06-22 08:30:00 +8)),
+            None
+        );
     }
 }
