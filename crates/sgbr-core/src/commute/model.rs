@@ -139,8 +139,19 @@ mod tests {
 
     #[test]
     fn orders_by_hour_then_minute() {
-        assert!(TimeOfDay { hour: 8, minute: 0 } < TimeOfDay { hour: 8, minute: 30 });
-        assert!(TimeOfDay { hour: 8, minute: 59 } < TimeOfDay { hour: 9, minute: 0 });
+        assert!(
+            TimeOfDay { hour: 8, minute: 0 }
+                < TimeOfDay {
+                    hour: 8,
+                    minute: 30
+                }
+        );
+        assert!(
+            TimeOfDay {
+                hour: 8,
+                minute: 59
+            } < TimeOfDay { hour: 9, minute: 0 }
+        );
         assert_eq!(
             TimeOfDay { hour: 8, minute: 0 },
             TimeOfDay { hour: 8, minute: 0 }
@@ -149,14 +160,30 @@ mod tests {
 
     #[test]
     fn converts_to_time_when_valid() {
-        let t = TimeOfDay { hour: 8, minute: 5 }.to_time().expect("valid time");
+        let t = TimeOfDay { hour: 8, minute: 5 }
+            .to_time()
+            .expect("valid time");
         assert_eq!(t, time::macros::time!(08:05:00));
     }
 
     #[test]
     fn rejects_out_of_range() {
-        assert!(TimeOfDay { hour: 24, minute: 0 }.to_time().is_none());
-        assert!(TimeOfDay { hour: 0, minute: 60 }.to_time().is_none());
+        assert!(
+            TimeOfDay {
+                hour: 24,
+                minute: 0
+            }
+            .to_time()
+            .is_none()
+        );
+        assert!(
+            TimeOfDay {
+                hour: 0,
+                minute: 60
+            }
+            .to_time()
+            .is_none()
+        );
     }
 
     #[test]
@@ -270,7 +297,10 @@ mod tests {
                 "83139",
                 days,
                 TimeOfDay { hour: 8, minute: 0 },
-                TimeOfDay { hour: 24, minute: 0 },
+                TimeOfDay {
+                    hour: 24,
+                    minute: 0
+                },
                 None,
             ),
             Err(CommuteError::InvalidTime)

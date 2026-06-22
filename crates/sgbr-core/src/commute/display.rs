@@ -13,7 +13,13 @@ pub fn format_live_update(line: &str, minutes: &[i64]) -> String {
     }
     let parts: Vec<String> = minutes
         .iter()
-        .map(|&m| if m <= 0 { "due".to_owned() } else { format!("{m} min") })
+        .map(|&m| {
+            if m <= 0 {
+                "due".to_owned()
+            } else {
+                format!("{m} min")
+            }
+        })
         .collect();
     format!("Bus {line} · {}", parts.join(" · "))
 }
