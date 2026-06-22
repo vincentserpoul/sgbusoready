@@ -3,5 +3,6 @@
 
 pub mod display;
 pub mod model;
+pub mod schedule;
 pub mod store;
 pub mod window;

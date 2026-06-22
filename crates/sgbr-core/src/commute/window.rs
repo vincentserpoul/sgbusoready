@@ -27,6 +27,9 @@ impl Commute {
     pub fn next_window_start(&self, now: OffsetDateTime) -> Option<OffsetDateTime> {
         let start_time = self.start.to_time()?;
         let mut date = now.date();
+        // Every future candidate reuses `now`'s UTC offset. Singapore (the
+        // target market) has no DST, so this is exact; in a DST zone a window
+        // could be off by an hour across a transition.
         // Today plus the next 7 calendar days covers every weekly recurrence.
         for _ in 0..8 {
             if self.days.contains(date.weekday()) {
@@ -39,6 +42,29 @@ impl Commute {
             date = date.next_day()?;
         }
         None
+    }
+
+    /// If the commute is active at `now`, the [`OffsetDateTime`] of today's
+    /// window close (`end`); otherwise `None`.
+    #[must_use]
+    pub fn current_window_end(&self, now: OffsetDateTime) -> Option<OffsetDateTime> {
+        if !self.is_active_at(now) {
+            return None;
+        }
+        let end_time = self.end.to_time()?;
+        Some(PrimitiveDateTime::new(now.date(), end_time).assume_offset(now.offset()))
+    }
+
+    /// The next moment this commute changes state: its window close if active
+    /// now, otherwise its next window open. `None` only when `next_window_start`
+    /// is `None` (no days / invalid time — neither happens via `Commute::new`).
+    #[must_use]
+    pub fn next_boundary(&self, now: OffsetDateTime) -> Option<OffsetDateTime> {
+        if self.is_active_at(now) {
+            self.current_window_end(now)
+        } else {
+            self.next_window_start(now)
+        }
     }
 }
 
@@ -120,6 +146,46 @@ mod tests {
         assert_eq!(
             c.next_window_start(datetime!(2026-06-22 08:00:00 +8)),
             Some(datetime!(2026-06-23 08:00:00 +8))
+        );
+    }
+
+    #[test]
+    fn current_window_end_some_when_active() {
+        // Monday 08:30 -> active, window ends 09:00 the same day.
+        let c = mon_fri_8_to_9();
+        assert_eq!(
+            c.current_window_end(datetime!(2026-06-22 08:30:00 +8)),
+            Some(datetime!(2026-06-22 09:00:00 +8))
+        );
+    }
+
+    #[test]
+    fn current_window_end_none_when_inactive() {
+        // Monday 07:00 -> not active -> no current window.
+        let c = mon_fri_8_to_9();
+        assert_eq!(
+            c.current_window_end(datetime!(2026-06-22 07:00:00 +8)),
+            None
+        );
+    }
+
+    #[test]
+    fn next_boundary_is_end_when_active() {
+        // Active Monday 08:30 -> next boundary is this window's end 09:00.
+        let c = mon_fri_8_to_9();
+        assert_eq!(
+            c.next_boundary(datetime!(2026-06-22 08:30:00 +8)),
+            Some(datetime!(2026-06-22 09:00:00 +8))
+        );
+    }
+
+    #[test]
+    fn next_boundary_is_next_start_when_inactive() {
+        // Inactive Monday 07:00 -> next boundary is today's start 08:00.
+        let c = mon_fri_8_to_9();
+        assert_eq!(
+            c.next_boundary(datetime!(2026-06-22 07:00:00 +8)),
+            Some(datetime!(2026-06-22 08:00:00 +8))
         );
     }
 }

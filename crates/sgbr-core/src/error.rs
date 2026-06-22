@@ -20,6 +20,10 @@ pub enum CoreError {
     /// An `EstimatedArrival` timestamp was not valid RFC3339.
     #[error("invalid arrival timestamp: {0}")]
     InvalidTimestamp(String),
+
+    /// A filesystem operation on the persisted store failed.
+    #[error("commute store io failed: {0}")]
+    Io(String),
 }
 
 #[cfg(test)]
