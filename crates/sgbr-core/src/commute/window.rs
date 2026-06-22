@@ -27,6 +27,9 @@ impl Commute {
     pub fn next_window_start(&self, now: OffsetDateTime) -> Option<OffsetDateTime> {
         let start_time = self.start.to_time()?;
         let mut date = now.date();
+        // Every future candidate reuses `now`'s UTC offset. Singapore (the
+        // target market) has no DST, so this is exact; in a DST zone a window
+        // could be off by an hour across a transition.
         // Today plus the next 7 calendar days covers every weekly recurrence.
         for _ in 0..8 {
             if self.days.contains(date.weekday()) {
