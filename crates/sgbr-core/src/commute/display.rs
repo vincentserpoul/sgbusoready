@@ -30,6 +30,8 @@ pub fn format_live_update(line: &str, minutes: &[i64]) -> String {
 #[must_use]
 pub fn format_see_you_soon(next_start: OffsetDateTime) -> String {
     let fmt = format_description!("[weekday repr:short] [hour]:[minute]");
+    // The descriptor only uses fields every `OffsetDateTime` has, so formatting
+    // is infallible here; `unwrap_or_default` is a safe, lint-clean fallback.
     let when = next_start.format(&fmt).unwrap_or_default();
     format!("see you soon · next {when}")
 }
@@ -64,6 +66,15 @@ mod tests {
         assert_eq!(
             format_see_you_soon(datetime!(2026-06-23 08:00:00 +8)),
             "see you soon · next Tue 08:00"
+        );
+    }
+
+    #[test]
+    fn see_you_soon_zero_pads_hour_and_minute() {
+        // Monday 2026-06-22 08:05 -> both fields zero-padded.
+        assert_eq!(
+            format_see_you_soon(datetime!(2026-06-22 08:05:00 +8)),
+            "see you soon · next Mon 08:05"
         );
     }
 }
