@@ -1,0 +1,28 @@
+// Direction-C design tokens. Every component/screen reads from here — no
+// hardcoded colors — so a future light theme is a token swap.
+
+export global Palette {
+    out property <color> bg: #0A0B10;
+    out property <color> surface: #171A22;
+    out property <color> surface-alt: #1D2029;
+    out property <color> hairline: #262A36;
+    out property <color> text: #F0F1F6;
+    out property <color> text-dim: #AEB3C0;
+    out property <color> text-faint: #6E7280;
+    out property <color> accent-solid: #8B7BFF;
+    out property <color> accent-warm: #FF8AA0;
+    out property <color> on-accent: #0A0B10;
+    out property <color> chip-muted-bg: #FFFFFF14;
+    out property <color> chip-muted-text: #C8CCD8;
+    out property <color> danger: #FF8AA0;
+    out property <brush> accent: @linear-gradient(135deg, #8B7BFF 0%, #FF8AA0 100%);
+    out property <brush> hero: @linear-gradient(135deg, #1D1B3A 0%, #2A1F33 100%);
+}
+
+export global Type {
+    out property <length> title: 22px;
+    out property <length> heading: 16px;
+    out property <length> body: 14px;
+    out property <length> label: 11px;
+    out property <length> caption: 12px;
+}

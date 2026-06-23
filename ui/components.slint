@@ -1,0 +1,327 @@
+// Direction-C custom widgets. All token-driven (see theme.slint), with subtle
+// opacity press feedback. No std-widgets — full visual control.
+
+import { Palette, Type } from "theme.slint";
+
+// Centers content in a phone-width column so the layout stays tidy at any window
+// size (desktop) and matches the device width (Android fills the screen).
+export component PhoneColumn inherits HorizontalLayout {
+    Rectangle { horizontal-stretch: 1; }
+    VerticalLayout {
+        horizontal-stretch: 0;
+        max-width: 440px;
+        min-width: 300px;
+        @children
+    }
+    Rectangle { horizontal-stretch: 1; }
+}
+
+export component AppBar inherits Rectangle {
+    in property <string> title;
+    in property <bool> show-back: false;
+    in property <string> action-text: "";
+    callback back();
+    callback action();
+    height: 56px;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 16px;
+        spacing: 6px;
+        Rectangle {
+            width: root.show-back ? 34px : 4px;
+            Text {
+                text: "←";
+                font-size: 22px;
+                color: Palette.text;
+                visible: root.show-back;
+            }
+            TouchArea {
+                enabled: root.show-back;
+                clicked => { root.back(); }
+            }
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.title;
+            font-size: Type.heading;
+            font-weight: 700;
+            color: Palette.text;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: root.action-text == "" ? 0px : t.preferred-width + 4px;
+            t := Text {
+                text: root.action-text;
+                color: Palette.danger;
+                font-size: Type.body;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            TouchArea {
+                enabled: root.action-text != "";
+                clicked => { root.action(); }
+            }
+        }
+    }
+}
+
+export component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 48px;
+    border-radius: 14px;
+    background: Palette.accent;
+    opacity: !root.enabled ? 0.4 : (ta.pressed ? 0.82 : 1.0);
+    animate opacity { duration: 100ms; easing: ease-out; }
+    Text {
+        text: root.text;
+        color: Palette.on-accent;
+        font-weight: 700;
+        font-size: Type.body;
+    }
+    ta := TouchArea {
+        clicked => { if (root.enabled) { root.clicked(); } }
+    }
+}
+
+export component GhostButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+    height: 48px;
+    border-radius: 14px;
+    background: Palette.surface;
+    border-width: 1px;
+    border-color: Palette.hairline;
+    opacity: ta.pressed ? 0.7 : 1.0;
+    animate opacity { duration: 100ms; easing: ease-out; }
+    Text {
+        text: root.text;
+        color: Palette.text-dim;
+        font-weight: 600;
+        font-size: Type.body;
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component Chip inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    callback toggled();
+    height: 34px;
+    border-radius: 17px;
+    background: root.selected ? Palette.accent-solid : Palette.chip-muted-bg;
+    opacity: ta.pressed ? 0.78 : 1.0;
+    animate opacity { duration: 90ms; easing: ease-out; }
+    horizontal-stretch: 0;
+    HorizontalLayout {
+        padding-left: 13px;
+        padding-right: 13px;
+        Text {
+            vertical-alignment: center;
+            text: root.text;
+            font-weight: 600;
+            font-size: Type.body;
+            color: root.selected ? Palette.on-accent : Palette.chip-muted-text;
+        }
+    }
+    ta := TouchArea {
+        clicked => { root.toggled(); }
+    }
+}
+
+export component DayToggle inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    callback toggled();
+    width: 34px;
+    height: 34px;
+    border-radius: 17px;
+    background: root.on ? Palette.accent-solid : Palette.chip-muted-bg;
+    opacity: ta.pressed ? 0.7 : 1.0;
+    animate opacity { duration: 90ms; easing: ease-out; }
+    Text {
+        text: root.label;
+        font-size: Type.label;
+        font-weight: 600;
+        color: root.on ? Palette.on-accent : Palette.chip-muted-text;
+    }
+    ta := TouchArea {
+        clicked => { root.toggled(); }
+    }
+}
+
+export component TextField inherits Rectangle {
+    in property <string> placeholder;
+    in-out property <string> text <=> ti.text;
+    callback edited();
+    height: 46px;
+    border-radius: 12px;
+    background: Palette.surface;
+    border-width: 1px;
+    border-color: ti.has-focus ? Palette.accent-solid : Palette.hairline;
+    HorizontalLayout {
+        padding-left: 13px;
+        padding-right: 13px;
+        Rectangle {
+            if ti.text == "": Text {
+                x: 0;
+                vertical-alignment: center;
+                horizontal-alignment: left;
+                text: root.placeholder;
+                color: Palette.text-faint;
+                font-size: Type.body;
+            }
+            ti := TextInput {
+                vertical-alignment: center;
+                color: Palette.text;
+                font-size: Type.body;
+                single-line: true;
+                edited => { root.edited(); }
+            }
+        }
+    }
+}
+
+component NumStepper inherits VerticalLayout {
+    in property <int> value;
+    in property <int> max;
+    callback changed(int);
+    alignment: center;
+    spacing: 1px;
+    Rectangle {
+        height: 16px;
+        Text { text: "▲"; font-size: 11px; color: Palette.text-dim; }
+        TouchArea { clicked => { root.changed(root.value >= root.max ? 0 : root.value + 1); } }
+    }
+    Text {
+        text: root.value < 10 ? "0\{root.value}" : "\{root.value}";
+        font-size: 19px;
+        font-weight: 700;
+        color: Palette.text;
+        horizontal-alignment: center;
+    }
+    Rectangle {
+        height: 16px;
+        Text { text: "▼"; font-size: 11px; color: Palette.text-dim; }
+        TouchArea { clicked => { root.changed(root.value <= 0 ? root.max : root.value - 1); } }
+    }
+}
+
+export component TimeStepper inherits Rectangle {
+    in property <string> caption;
+    in-out property <int> hour;
+    in-out property <int> minute;
+    height: 78px;
+    border-radius: 12px;
+    background: Palette.surface;
+    border-width: 1px;
+    border-color: Palette.hairline;
+    VerticalLayout {
+        padding: 8px;
+        spacing: 2px;
+        Text {
+            text: root.caption;
+            font-size: Type.label;
+            color: Palette.text-faint;
+            horizontal-alignment: center;
+        }
+        HorizontalLayout {
+            alignment: center;
+            spacing: 6px;
+            NumStepper { value: root.hour; max: 23; changed(v) => { root.hour = v; } }
+            Text { text: ":"; font-size: 19px; font-weight: 700; color: Palette.text; vertical-alignment: center; }
+            NumStepper { value: root.minute; max: 59; changed(v) => { root.minute = v; } }
+        }
+    }
+}
+
+export component FloatingAddButton inherits Rectangle {
+    callback clicked();
+    width: 56px;
+    height: 56px;
+    border-radius: 28px;
+    background: Palette.accent;
+    drop-shadow-blur: 18px;
+    drop-shadow-color: #00000077;
+    drop-shadow-offset-y: 4px;
+    opacity: ta.pressed ? 0.85 : 1.0;
+    animate opacity { duration: 100ms; easing: ease-out; }
+    Text {
+        text: "+";
+        font-size: 30px;
+        color: Palette.on-accent;
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component CommuteCard inherits Rectangle {
+    in property <string> label;
+    in property <string> status;
+    in property <bool> active;
+    callback clicked();
+    height: 78px;
+    border-radius: 18px;
+    background: root.active ? Palette.hero : Palette.surface;
+    border-width: 1px;
+    border-color: root.active ? #332A4A : Palette.hairline;
+    opacity: ta.pressed ? 0.9 : 1.0;
+    animate opacity { duration: 100ms; easing: ease-out; }
+    VerticalLayout {
+        padding: 14px;
+        spacing: 5px;
+        HorizontalLayout {
+            Text {
+                horizontal-stretch: 1;
+                text: root.label;
+                font-size: Type.body;
+                font-weight: 700;
+                color: Palette.text;
+                overflow: elide;
+            }
+            if root.active: Rectangle {
+                background: #FFFFFF1A;
+                border-radius: 11px;
+                HorizontalLayout {
+                    padding-left: 9px;
+                    padding-right: 9px;
+                    Text { vertical-alignment: center; text: "active now"; font-size: Type.label; color: #C9B8FF; }
+                }
+            }
+        }
+        Text {
+            text: root.status;
+            font-size: Type.caption;
+            color: Palette.text-dim;
+            overflow: elide;
+        }
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component StopResultRow inherits Rectangle {
+    in property <string> name;
+    in property <string> sub;
+    callback clicked();
+    height: 58px;
+    background: ta.pressed ? Palette.surface : transparent;
+    border-radius: 12px;
+    animate background { duration: 80ms; }
+    VerticalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 2px;
+        alignment: center;
+        Text { text: root.name; font-size: Type.body; font-weight: 600; color: Palette.text; overflow: elide; }
+        Text { text: root.sub; font-size: Type.label; color: Palette.text-dim; overflow: elide; }
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}

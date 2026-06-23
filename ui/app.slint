@@ -1,171 +1,265 @@
-import { LineEdit, SpinBox, Button, CheckBox, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Palette, Type } from "theme.slint";
+import {
+    PhoneColumn, AppBar, PrimaryButton, Chip, DayToggle, TextField, TimeStepper,
+    FloatingAddButton, CommuteCard, StopResultRow,
+} from "components.slint";
+import { ScrollView } from "std-widgets.slint";
 
-// One commute as shown in the list. `status` is the in-app line: either
-// "active now" or the `format_see_you_soon` text rendered by Rust.
 struct CommuteRow {
     label: string,
     status: string,
+    active: bool,
+    index: int,
 }
 
-component CommuteListRow inherits Rectangle {
-    in property <string> label;
-    in property <string> status;
-    callback edit();
-    callback move-up();
-    callback move-down();
-    callback remove();
-
-    height: 56px;
-    background: #f2f2f2;
-    border-radius: 6px;
-
-    HorizontalBox {
-        padding: 8px;
-        spacing: 6px;
-        alignment: space-between;
-
-        VerticalLayout {
-            horizontal-stretch: 1;
-            alignment: center;
-            Text { text: root.label; font-weight: 700; overflow: elide; }
-            Text { text: root.status; font-size: 12px; color: #555; overflow: elide; }
-        }
-        Button { text: "Edit"; max-height: 36px; clicked => { root.edit(); } }
-        Button { text: "↑"; max-height: 36px; max-width: 40px; clicked => { root.move-up(); } }
-        Button { text: "↓"; max-height: 36px; max-width: 40px; clicked => { root.move-down(); } }
-        Button { text: "✕"; max-height: 36px; max-width: 40px; clicked => { root.remove(); } }
-    }
+struct StopResult {
+    code: string,
+    name: string,
+    road: string,
 }
+
+enum Screen { list, editor, search }
 
 export component AppWindow inherits Window {
     in property <[CommuteRow]> rows;
+    in-out property <Screen> screen: Screen.list;
 
-    // Form state. `editing-index` is the list index being edited, or -1 to add
-    // a new commute. Rust reads these on `save` and writes them on `edit`/`new`.
+    // Editor form state.
     in-out property <int> editing-index: -1;
+    in-out property <string> form-stop-code;
+    in-out property <string> form-stop-name;
     in-out property <string> form-line;
-    in-out property <string> form-stop;
-    in-out property <int> form-start-hour: 8;
-    in-out property <int> form-start-minute: 0;
-    in-out property <int> form-end-hour: 9;
-    in-out property <int> form-end-minute: 0;
-    in-out property <bool> form-day-mon;
-    in-out property <bool> form-day-tue;
-    in-out property <bool> form-day-wed;
-    in-out property <bool> form-day-thu;
-    in-out property <bool> form-day-fri;
-    in-out property <bool> form-day-sat;
-    in-out property <bool> form-day-sun;
+    in property <[string]> stop-services;
+    in-out property <bool> day-mon;
+    in-out property <bool> day-tue;
+    in-out property <bool> day-wed;
+    in-out property <bool> day-thu;
+    in-out property <bool> day-fri;
+    in-out property <bool> day-sat;
+    in-out property <bool> day-sun;
+    in-out property <int> start-hour: 8;
+    in-out property <int> start-minute: 0;
+    in-out property <int> end-hour: 9;
+    in-out property <int> end-minute: 0;
     in-out property <string> error-text;
+
+    // Stop-search state.
+    in-out property <string> search-query;
+    in property <[StopResult]> search-results;
+    in property <bool> catalog-loading;
 
     callback save();
     callback delete(int);
-    callback move-up(int);
-    callback move-down(int);
     callback edit(int);
     callback new-commute();
+    callback search-changed();
+    callback stop-picked(string);
 
     title: "SG Bus Ready";
+    background: Palette.bg;
     preferred-width: 400px;
-    preferred-height: 720px;
+    preferred-height: 780px;
 
-    HorizontalLayout {
-        // Center a fixed-width column so the layout stays tidy whatever the
-        // window size (desktop) and matches the phone width (Android).
-        Rectangle { horizontal-stretch: 1; }
-        VerticalBox {
-            horizontal-stretch: 0;
-            max-width: 400px;
-            min-width: 320px;
+    // ---- List screen ----
+    Rectangle {
+        visible: root.screen == Screen.list;
+        PhoneColumn {
+        VerticalLayout {
             padding: 16px;
-
+            spacing: 12px;
             Text {
                 text: "Commutes";
-                font-size: 22px;
+                font-size: Type.title;
                 font-weight: 800;
+                color: Palette.text;
             }
-
             ScrollView {
                 vertical-stretch: 1;
-                min-height: 200px;
-                VerticalBox {
-                    padding: 0px;
-                    spacing: 6px;
+                VerticalLayout {
+                    spacing: 10px;
                     alignment: start;
-                    for row[idx] in root.rows: CommuteListRow {
+                    for row in root.rows: CommuteCard {
                         label: row.label;
                         status: row.status;
-                        edit => { root.edit(idx); }
-                        move-up => { root.move-up(idx); }
-                        move-down => { root.move-down(idx); }
-                        remove => { root.delete(idx); }
+                        active: row.active;
+                        clicked => {
+                            root.edit(row.index);
+                            root.screen = Screen.editor;
+                        }
                     }
                     if root.rows.length == 0: Text {
-                        text: "No commutes yet. Add one below.";
-                        color: #777;
+                        text: "No commutes yet — tap + to add one.";
+                        color: Palette.text-faint;
+                        font-size: Type.body;
                     }
                 }
             }
-
-            Rectangle { height: 1px; background: #ddd; }
-
-            Text {
-                text: root.editing-index < 0 ? "Add commute" : "Edit commute";
-                font-weight: 700;
-            }
-
-            HorizontalBox {
-                padding: 0px;
-                Text { text: "Line"; vertical-alignment: center; width: 48px; }
-                LineEdit { placeholder-text: "e.g. 15"; text <=> root.form-line; }
-            }
-            HorizontalBox {
-                padding: 0px;
-                Text { text: "Stop"; vertical-alignment: center; width: 48px; }
-                LineEdit { placeholder-text: "e.g. 83139"; text <=> root.form-stop; }
-            }
-
-            HorizontalBox {
-                padding: 0px;
-                spacing: 2px;
-                CheckBox { text: "Mo"; checked <=> root.form-day-mon; }
-                CheckBox { text: "Tu"; checked <=> root.form-day-tue; }
-                CheckBox { text: "We"; checked <=> root.form-day-wed; }
-                CheckBox { text: "Th"; checked <=> root.form-day-thu; }
-                CheckBox { text: "Fr"; checked <=> root.form-day-fri; }
-                CheckBox { text: "Sa"; checked <=> root.form-day-sat; }
-                CheckBox { text: "Su"; checked <=> root.form-day-sun; }
-            }
-
-            HorizontalBox {
-                padding: 0px;
-                Text { text: "Start"; vertical-alignment: center; width: 48px; }
-                SpinBox { value <=> root.form-start-hour; minimum: 0; maximum: 23; }
-                SpinBox { value <=> root.form-start-minute; minimum: 0; maximum: 59; }
-            }
-            HorizontalBox {
-                padding: 0px;
-                Text { text: "End"; vertical-alignment: center; width: 48px; }
-                SpinBox { value <=> root.form-end-hour; minimum: 0; maximum: 23; }
-                SpinBox { value <=> root.form-end-minute; minimum: 0; maximum: 59; }
-            }
-
-            if root.error-text != "": Text {
-                text: root.error-text;
-                color: #c0392b;
-                wrap: word-wrap;
-            }
-
-            HorizontalBox {
-                padding: 0px;
-                Button {
-                    text: root.editing-index < 0 ? "Add" : "Save";
-                    primary: true;
-                    clicked => { root.save(); }
-                }
-                Button { text: "Clear"; clicked => { root.new-commute(); } }
+        }
+        }
+        FloatingAddButton {
+            x: parent.width - self.width - 20px;
+            y: parent.height - self.height - 20px;
+            clicked => {
+                root.new-commute();
+                root.screen = Screen.editor;
             }
         }
-        Rectangle { horizontal-stretch: 1; }
+    }
+
+    // ---- Editor screen ----
+    Rectangle {
+        visible: root.screen == Screen.editor;
+        PhoneColumn {
+        VerticalLayout {
+            AppBar {
+                title: root.editing-index < 0 ? "New commute" : "Edit commute";
+                show-back: true;
+                action-text: root.editing-index < 0 ? "" : "Delete";
+                back => { root.screen = Screen.list; }
+                action => {
+                    root.delete(root.editing-index);
+                    root.screen = Screen.list;
+                }
+            }
+            ScrollView {
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    alignment: start;
+
+                    Text { text: "Stop"; font-size: Type.label; color: Palette.text-faint; }
+                    Rectangle {
+                        height: 58px;
+                        border-radius: 12px;
+                        background: Palette.surface;
+                        border-width: 1px;
+                        border-color: Palette.hairline;
+                        HorizontalLayout {
+                            padding-left: 13px;
+                            padding-right: 13px;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: root.form-stop-name == "" ? "Choose a stop" : root.form-stop-name;
+                                    color: root.form-stop-name == "" ? Palette.text-faint : Palette.text;
+                                    font-weight: 600;
+                                    font-size: Type.body;
+                                    overflow: elide;
+                                }
+                                if root.form-stop-code != "": Text {
+                                    text: root.form-stop-code;
+                                    font-size: Type.label;
+                                    color: Palette.text-dim;
+                                }
+                            }
+                            Text { text: "›"; font-size: 20px; color: Palette.text-dim; vertical-alignment: center; }
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.search-query = "";
+                                root.screen = Screen.search;
+                            }
+                        }
+                    }
+
+                    Text { text: "Line at this stop"; font-size: Type.label; color: Palette.text-faint; }
+                    ScrollView {
+                        height: 46px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            for svc in root.stop-services: Chip {
+                                text: svc;
+                                selected: svc == root.form-line;
+                                toggled => { root.form-line = svc; }
+                            }
+                            if root.stop-services.length == 0: Text {
+                                text: "Pick a stop first";
+                                color: Palette.text-faint;
+                                font-size: Type.body;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Text { text: "Active days"; font-size: Type.label; color: Palette.text-faint; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        DayToggle { label: "M"; on: root.day-mon; toggled => { root.day-mon = !root.day-mon; } }
+                        DayToggle { label: "T"; on: root.day-tue; toggled => { root.day-tue = !root.day-tue; } }
+                        DayToggle { label: "W"; on: root.day-wed; toggled => { root.day-wed = !root.day-wed; } }
+                        DayToggle { label: "T"; on: root.day-thu; toggled => { root.day-thu = !root.day-thu; } }
+                        DayToggle { label: "F"; on: root.day-fri; toggled => { root.day-fri = !root.day-fri; } }
+                        DayToggle { label: "S"; on: root.day-sat; toggled => { root.day-sat = !root.day-sat; } }
+                        DayToggle { label: "S"; on: root.day-sun; toggled => { root.day-sun = !root.day-sun; } }
+                    }
+
+                    Text { text: "Window"; font-size: Type.label; color: Palette.text-faint; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        TimeStepper { caption: "Start"; hour <=> root.start-hour; minute <=> root.start-minute; }
+                        TimeStepper { caption: "End"; hour <=> root.end-hour; minute <=> root.end-minute; }
+                    }
+
+                    if root.error-text != "": Text {
+                        text: root.error-text;
+                        color: Palette.danger;
+                        font-size: Type.caption;
+                        wrap: word-wrap;
+                    }
+
+                    Rectangle { height: 6px; }
+                    PrimaryButton {
+                        text: "Save commute";
+                        clicked => { root.save(); }
+                    }
+                }
+            }
+        }
+        }
+    }
+
+    // ---- Stop-search screen ----
+    Rectangle {
+        visible: root.screen == Screen.search;
+        PhoneColumn {
+        VerticalLayout {
+            AppBar {
+                title: "Choose stop";
+                show-back: true;
+                back => { root.screen = Screen.editor; }
+            }
+            VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+                TextField {
+                    placeholder: "Search name or code";
+                    text <=> root.search-query;
+                    edited => { root.search-changed(); }
+                }
+                if root.catalog-loading: Text {
+                    text: "Updating bus stops…";
+                    color: Palette.text-faint;
+                    font-size: Type.body;
+                }
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 2px;
+                        alignment: start;
+                        for r in root.search-results: StopResultRow {
+                            name: r.name;
+                            sub: r.road + " · " + r.code;
+                            clicked => {
+                                root.stop-picked(r.code);
+                                root.screen = Screen.editor;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        }
     }
 }
