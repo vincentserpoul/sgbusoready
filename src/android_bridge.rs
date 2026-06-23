@@ -32,10 +32,10 @@ use sgbr_core::commute::store::CommuteStore;
 use sgbr_core::lta::arrival::service_arrivals;
 use sgbr_core::lta::client::fetch_arrivals;
 
-/// LTA DataMall AccountKey, injected at build time from `LTA_SDK_ACCOUNT_KEY`
+/// LTA DataMall AccountKey, injected at build time from `LTA_API_ACCOUNT_KEY`
 /// (read from the repo-root `.env` by `android/.env.build`). Empty if unset,
 /// in which case fetches fail gracefully and rows show "no buses".
-const ACCOUNT_KEY: &str = match option_env!("LTA_SDK_ACCOUNT_KEY") {
+const ACCOUNT_KEY: &str = match option_env!("LTA_API_ACCOUNT_KEY") {
     Some(k) => k,
     None => "",
 };
