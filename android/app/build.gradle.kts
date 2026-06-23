@@ -28,6 +28,7 @@ android {
 }
 
 dependencies {
-    // Phase B: Kotlin glue + hasCode=true. core-ktx provides NotificationCompat.
-    implementation("androidx.core:core-ktx:1.13.1")
+    // Kotlin glue: NotificationCompat. 1.17.0+ adds the Android 16 Live Update
+    // promotion APIs (setRequestPromotedOngoing / setShortCriticalText).
+    implementation("androidx.core:core-ktx:1.17.0")
 }

@@ -58,7 +58,19 @@ class CommuteService : Service() {
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            // Android 16 Live Update: surface as a status-bar/lock-screen chip.
+            // NotificationCompat no-ops these on pre-36 devices (plain ongoing).
+            .setRequestPromotedOngoing(true)
+            .setShortCriticalText(chipText(text))
             .build()
+
+    /** Compact status-bar chip text, e.g. body "Bus 15 · 3 min · 22 min" -> "15 · 3 min". */
+    private fun chipText(body: String): String {
+        val parts = body.substringBefore('\n').split(" · ")
+        val line = parts.getOrElse(0) { "" }.removePrefix("Bus ")
+        val first = parts.getOrElse(1) { "" }
+        return if (first.isEmpty()) line else "$line · $first"
+    }
 
     private fun startForegroundCompat(notif: Notification) {
         if (Build.VERSION.SDK_INT >= 29) {
