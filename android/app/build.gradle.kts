@@ -28,8 +28,6 @@ android {
 }
 
 dependencies {
-    // Phase A is pure-Rust (hasCode=false, no dex). Adding an AndroidX dep here
-    // would inject androidx.startup.InitializationProvider into the merged
-    // manifest, which crashes at launch with no dex to load it. Kotlin deps
-    // (core-ktx for NotificationCompat) arrive in Phase B alongside hasCode=true.
+    // Phase B: Kotlin glue + hasCode=true. core-ktx provides NotificationCompat.
+    implementation("androidx.core:core-ktx:1.13.1")
 }

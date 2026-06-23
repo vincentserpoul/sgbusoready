@@ -70,6 +70,12 @@ slint-build = "1.15"
 # switch the base dep to default-features=false and select backends per target.
 [target.'cfg(target_os = "android")'.dependencies]
 slint = { version = "1.15", features = ["backend-android-activity-06"] }
+# JNI bridge to the Kotlin glue (notifications). ndk-context exposes the JavaVM
+# + Activity that android-activity set up, without poking AndroidApp pointers.
+jni = "0.21"
+ndk-context = "0.1"
+log = "0.4"
+android_logger = "0.14"
 
 # cargo-apk manifest metadata (no INTERNET permission yet — fixed sample only).
 # NOTE: min/target_sdk_version MUST live under [...android.sdk] — cargo-apk

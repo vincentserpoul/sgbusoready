@@ -38,6 +38,9 @@ mod generated {
 
 use generated::{AppWindow, ServiceRow};
 
+#[cfg(target_os = "android")]
+mod android_bridge;
+
 use sgbr_core::lta::arrival::{ServiceArrivals, service_arrivals};
 use sgbr_core::lta::model::BusArrivalResponse;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -104,8 +107,15 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
 )]
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag("sgbr"),
+    );
     if slint::android::init(app).is_err() {
         return;
     }
+    // Phase B spike: prove the Rust->Kotlin JNI notification bridge on launch.
+    android_bridge::post_test_notification();
     let _ = run_app();
 }

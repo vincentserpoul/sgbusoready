@@ -191,7 +191,7 @@ dependencies {
 
 ```bash
 source android/.env.build
-cargo ndk -t arm64-v8a -p 35 -o android/app/src/main/jniLibs build
+cargo ndk -t arm64-v8a -P 35 -o android/app/src/main/jniLibs build
 ```
 Expected: `android/app/src/main/jniLibs/arm64-v8a/libsgbusoready.so` exists. `-p 35` pins the native API level to 35 (NDK r29 max). No Rust change needed — reuses the existing `[lib] crate-type=["rlib","cdylib"]` and `android_main`.
 
@@ -296,7 +296,7 @@ In `src/lib.rs` `android_main`, after `slint::android::init(app)`, obtain the `J
 
 ```bash
 source android/.env.build
-cargo ndk -t arm64-v8a -p 35 -o android/app/src/main/jniLibs build
+cargo ndk -t arm64-v8a -P 35 -o android/app/src/main/jniLibs build
 cd android && ./gradlew assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell monkey -p com.serpoul.sgbusready -c android.intent.category.LAUNCHER 1
 ```
@@ -313,7 +313,7 @@ The heart of the feature. The foreground service refreshes the ongoing notificat
 
 ### Task C1: Rust JNI entry points (the decision surface)
 
-**Files:** new `src/android_bridge.rs` (compiled only on Android), `pub mod android_bridge;` guarded by `#[cfg(target_os="android")]` in `src/lib.rs`. AccountKey injected at build time via `env!("LTA_ACCOUNT_KEY")` (never committed).
+**Files:** new `src/android_bridge.rs` (compiled only on Android), `pub mod android_bridge;` guarded by `#[cfg(target_os="android")]` in `src/lib.rs`. AccountKey injected at build time via `env!("LTA_SDK_ACCOUNT_KEY")` (never committed).
 
 These are `#[no_mangle] extern "C"` JNI functions (named `Java_com_serpoul_sgbusready_<Class>_<method>`). All heavy logic delegates to the already-tested `sgbr-core`.
 
@@ -336,7 +336,7 @@ use sgbr_core::commute::store::CommuteStore;
 use sgbr_core::lta::arrival::service_arrivals;
 use sgbr_core::lta::client::fetch_arrivals;
 
-const ACCOUNT_KEY: &str = env!("LTA_ACCOUNT_KEY");
+const ACCOUNT_KEY: &str = env!("LTA_SDK_ACCOUNT_KEY");
 
 fn store_path(files_dir: &str) -> PathBuf {
     let mut p = PathBuf::from(files_dir);
@@ -411,7 +411,7 @@ pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_nextAlarmEpochMillis
 - [ ] **Step 3:** `cargo clippy -p sgbr-core --all-targets -- -D warnings` still clean (this file is in the root crate, not `sgbr-core`). Build the `.so` with the key:
 ```bash
 source android/.env.build
-LTA_ACCOUNT_KEY=<your-key> cargo ndk -t arm64-v8a -p 35 -o android/app/src/main/jniLibs build
+LTA_SDK_ACCOUNT_KEY (read from repo-root .env by android/.env.build) cargo ndk -t arm64-v8a -P 35 -o android/app/src/main/jniLibs build
 ```
 
 ### Task C2: Kotlin foreground service, scheduler, receivers
@@ -585,7 +585,7 @@ adb shell am broadcast -n com.serpoul.sgbusready/.AlarmReceiver
 
 - [ ] **Step 3: Commit** Phase C (Rust bridge + Kotlin service/scheduler/receivers + manifest).
 
-> **Do not commit your real `LTA_ACCOUNT_KEY`.** It's supplied via the build env only.
+> **Do not commit your real `LTA_SDK_ACCOUNT_KEY`.** It's supplied via the build env only.
 
 ---
 
@@ -618,6 +618,6 @@ Only once a clean `android-36` SDK is installed. Bump `compileSdk = 36`; on the 
 
 - **Spec coverage:** commutes managed in-app (Phase D); ongoing/Live-Update notification during each active window with next-3 arrivals + ~15s refresh (Phase C, using `format_live_update` + `service_arrivals` + `fetch_arrivals`); per-row "see you soon" off-window in-app (Phase D, `format_see_you_soon`); AlarmManager wakes only at boundaries via `next_alarm_at`, BOOT re-arm (Phase C); one notification per active commute rendered as lines (Phase C `render_active`); Android-only, API-36 chip deferred (Phase E) — matches the spec's baseline/promotion split.
 - **Honest-about-risk:** the genuinely uncertain spots are the JNI accessor sequence (B2/C1, gated by on-device behavior, errors swallowed so they can't crash), the SDK-platform acceptance by AGP (Phase 0 fallback to a clean SDK), and JDK/Gradle/AGP version cohesion (Phase 0 + wrapper lever). These are flagged with verification gates and fallbacks rather than asserted.
-- **Secrets:** `LTA_ACCOUNT_KEY` is injected via build env (`env!`), never committed; `commutes.json` lives in app-private storage.
+- **Secrets:** `LTA_SDK_ACCOUNT_KEY` is injected via build env (`env!`), never committed; `commutes.json` lives in app-private storage.
 - **Lints:** all swallow-error `unwrap_or_default` lives only in the Android `android_bridge.rs` of the root crate with a scoped, reasoned `#![allow]`; `sgbr-core` stays strict and untouched.
 - **Type consistency:** Kotlin `CommuteNative.renderActive/nextAlarmEpochMillis(filesDir, epochSecs)` ↔ the Rust `Java_..._renderActive/nextAlarmEpochMillis` exports; `CommuteService`/`AlarmScheduler`/`AlarmReceiver`/`BootReceiver` names match the manifest entries; `NotificationHelper.{CHANNEL_ID,NOTIF_ID,ensureChannel,show,showNow}` consistent across B and C.
