@@ -1,1 +1,1 @@
-//! Paginated DataMall fetch.
+//! Paginated `DataMall` fetch.

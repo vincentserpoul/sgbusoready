@@ -1,1 +1,1 @@
-//! OData page parsing + stop→services inversion.
+//! `OData` page parsing + stop→services inversion.
