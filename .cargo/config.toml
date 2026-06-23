@@ -1,0 +1,10 @@
+# Android cross-compiles must NOT use the global `mold` linker configured in
+# ~/.cargo/config.toml's [build] rustflags: the NDK linker driver passes
+# `--use-android-relr-tags`, which mold does not understand. A target-specific
+# rustflags overrides (does not merge with) build.rustflags, so this selects the
+# NDK's bundled lld for the Android target instead of mold.
+# NOTE: an empty array is treated as "unset" and falls back to build.rustflags,
+# so we must explicitly select lld rather than clear the flags.
+# Desktop and other targets are unaffected and keep mold.
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]

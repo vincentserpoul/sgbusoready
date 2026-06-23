@@ -2,6 +2,13 @@
 /coverage
 /.bin
 
+# Android build artifacts + machine-specific config (wrapper files ARE committed)
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/app/src/main/jniLibs/
+/android/local.properties
+
 # Local secrets — the LTA DataMall AccountKey must never be committed.
 *.secret
 .env
