@@ -1,0 +1,1 @@
+//! Paginated DataMall fetch.
