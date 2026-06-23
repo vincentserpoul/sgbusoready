@@ -13,3 +13,6 @@
 *.secret
 .env
 .env.*
+
+# Visual brainstorming companion scratch files
+/.superpowers/
