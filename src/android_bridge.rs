@@ -1,26 +1,93 @@
-//! Android JNI bridge: calls into the Kotlin glue.
+//! Android JNI bridge.
+//!
+//! Two directions:
+//! - **Kotlin → Rust** (`Java_com_serpoul_sgbusready_CommuteNative_*`): the
+//!   foreground service / scheduler ask Rust what to show and when to wake.
+//!   The `JNIEnv` is supplied and the calling thread is a normal Java thread,
+//!   so no class-loader dance is needed.
+//! - **Rust → Kotlin** (`arm_alarms`): called from `android_main`'s native
+//!   thread, which resolves `FindClass` with the *system* class loader, so app
+//!   classes must be loaded via the Activity's class loader (`load_app_class`).
 //!
 //! SAFETY: this whole module is the documented platform-bridge unsafe surface
-//! (per the design doc). It turns the raw `JavaVM` / Activity pointers that
-//! `android-activity` published through `ndk-context` into `jni` handles. Each
-//! unsafe block has a safety comment. Callers swallow errors so a JNI misstep
-//! can never crash the UI thread.
+//! (per the design doc); each unsafe block has a safety comment. Errors are
+//! swallowed/logged so a JNI misstep can never crash the app.
 #![allow(
     unsafe_code,
     reason = "Android JNI requires raw VM/Context pointers; the sole unsafe surface, per the platform-bridge exception in the design doc"
 )]
 
-use jni::objects::{JClass, JObject, JValue};
-use jni::{AttachGuard, JavaVM};
-use jni::errors::Error as JniError;
+use std::path::PathBuf;
 
-/// Resolve an app class by name through the Activity's class loader.
-///
-/// A native thread attached to the JVM (like the one `android_main` runs on)
-/// resolves `FindClass` with the *system* class loader, which has no app
-/// classes — so `env.find_class("com/serpoul/...")` throws
-/// `ClassNotFoundException` even though the class is in the dex. Loading via the
-/// Activity's class loader fixes that.
+use jni::objects::{JClass, JObject, JString, JValue};
+use jni::sys::{jlong, jstring};
+use jni::{AttachGuard, JNIEnv, JavaVM};
+use jni::errors::Error as JniError;
+use time::OffsetDateTime;
+use time::macros::offset;
+
+use sgbr_core::commute::display::format_live_update;
+use sgbr_core::commute::schedule::{active_commutes_at, next_alarm_at};
+use sgbr_core::commute::store::CommuteStore;
+use sgbr_core::lta::arrival::service_arrivals;
+use sgbr_core::lta::client::fetch_arrivals;
+
+/// LTA DataMall AccountKey, injected at build time from `LTA_SDK_ACCOUNT_KEY`
+/// (read from the repo-root `.env` by `android/.env.build`). Empty if unset,
+/// in which case fetches fail gracefully and rows show "no buses".
+const ACCOUNT_KEY: &str = match option_env!("LTA_SDK_ACCOUNT_KEY") {
+    Some(k) => k,
+    None => "",
+};
+
+/// Initialise logcat logging (tag `sgbr`). Idempotent — safe to call from any
+/// entry point (the activity, the service's JNI calls), so logs work whichever
+/// component spawned the process.
+pub fn ensure_logger() {
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag("sgbr"),
+    );
+}
+
+/// Singapore is UTC+8 with no DST; commute times are wall-clock SGT.
+fn unix_to_sgt(epoch_secs: jlong) -> OffsetDateTime {
+    OffsetDateTime::from_unix_timestamp(epoch_secs)
+        .unwrap_or(OffsetDateTime::UNIX_EPOCH)
+        .to_offset(offset!(+8))
+}
+
+fn store_path(files_dir: &str) -> PathBuf {
+    let mut p = PathBuf::from(files_dir);
+    p.push("commutes.json");
+    p
+}
+
+/// Render the Live Update body for every active commute, one per line.
+/// Empty string => nothing active (caller stops the service).
+fn render_active(files_dir: &str, now: OffsetDateTime) -> String {
+    let store = CommuteStore::load(&store_path(files_dir)).unwrap_or_default();
+    let mut lines: Vec<String> = Vec::new();
+    for c in active_commutes_at(&store.commutes, now) {
+        let mins = match fetch_arrivals(ACCOUNT_KEY, &c.stop) {
+            Ok(resp) => service_arrivals(&resp, now)
+                .into_iter()
+                .find(|s| s.service_no == c.line)
+                .map(|s| s.minutes)
+                .unwrap_or_default(),
+            Err(e) => {
+                log::warn!("fetch {} @ {} failed: {e}", c.line, c.stop);
+                Vec::new()
+            }
+        };
+        lines.push(format_live_update(&c.line, &mins));
+    }
+    lines.join("\n")
+}
+
+/// Resolve an app class by binary name through the Activity's class loader.
+/// Needed for Rust→Kotlin calls from native threads (see module docs).
 fn load_app_class<'a>(
     env: &mut AttachGuard<'a>,
     activity: &JObject,
@@ -41,32 +108,22 @@ fn load_app_class<'a>(
     Ok(JClass::from(class_obj))
 }
 
-/// Post an ongoing notification through `NotificationHelper.showNow`.
-fn show_notification(title: &str, text: &str) -> Result<(), JniError> {
+/// Re-arm the next boundary alarm via `AlarmScheduler.arm(context)`.
+fn arm_alarms_inner() -> Result<(), JniError> {
     let ctx = ndk_context::android_context();
-    log::info!("jni: vm={:?} context={:?}", ctx.vm(), ctx.context());
-    // SAFETY: `ndk-context` holds the process JavaVM pointer published by
-    // android-activity during init; it is valid for the life of the process.
+    // SAFETY: ndk-context holds the process JavaVM, valid for the process life.
     let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }?;
     let mut env = vm.attach_current_thread()?;
-    // SAFETY: `ndk-context` holds the Activity (a Context) jobject for the
-    // running NativeActivity; valid while the activity is alive.
+    // SAFETY: ndk-context holds the running Activity (a Context) jobject.
     let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
-    let helper = load_app_class(&mut env, &activity, "com.serpoul.sgbusready.NotificationHelper")?;
-    let j_title = env.new_string(title)?;
-    let j_text = env.new_string(text)?;
+    let scheduler = load_app_class(&mut env, &activity, "com.serpoul.sgbusready.AlarmScheduler")?;
     let call = env.call_static_method(
-        &helper,
-        "showNow",
-        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
-        &[
-            JValue::Object(&activity),
-            JValue::Object(&j_title),
-            JValue::Object(&j_text),
-        ],
+        &scheduler,
+        "arm",
+        "(Landroid/content/Context;)V",
+        &[JValue::Object(&activity)],
     );
     if call.is_err() {
-        // Dump any pending Java exception (e.g. a Kotlin-side throw) to logcat.
         let _ = env.exception_describe();
         let _ = env.exception_clear();
     }
@@ -74,11 +131,54 @@ fn show_notification(title: &str, text: &str) -> Result<(), JniError> {
     Ok(())
 }
 
-/// Fire a one-shot notification proving the Rust→Kotlin JNI bridge works.
-/// Errors are logged (not propagated): a bridge failure must not crash the app.
-pub fn post_test_notification() {
-    match show_notification("SG Bus Ready", "Notification bridge OK") {
-        Ok(()) => log::info!("jni: notification posted"),
-        Err(e) => log::error!("jni: notification bridge failed: {e:?}"),
+/// Arm the commute alarms based on the saved store. Errors are logged only.
+pub fn arm_alarms() {
+    match arm_alarms_inner() {
+        Ok(()) => log::info!("jni: alarms armed"),
+        Err(e) => log::error!("jni: arm alarms failed: {e:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kotlin → Rust JNI exports (called by CommuteNative / the foreground service).
+// ---------------------------------------------------------------------------
+
+/// `CommuteNative.renderActive(filesDir, epochSecs) -> String`
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_renderActive(
+    mut env: JNIEnv,
+    _class: JClass,
+    files_dir: JString,
+    epoch_secs: jlong,
+) -> jstring {
+    ensure_logger();
+    let dir: String = match env.get_string(&files_dir) {
+        Ok(s) => s.into(),
+        Err(_) => String::new(),
+    };
+    let body = render_active(&dir, unix_to_sgt(epoch_secs));
+    match env.new_string(body) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// `CommuteNative.nextAlarmEpochMillis(filesDir, epochSecs) -> long` (-1 = none)
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_nextAlarmEpochMillis(
+    mut env: JNIEnv,
+    _class: JClass,
+    files_dir: JString,
+    epoch_secs: jlong,
+) -> jlong {
+    ensure_logger();
+    let dir: String = match env.get_string(&files_dir) {
+        Ok(s) => s.into(),
+        Err(_) => return -1,
+    };
+    let store = CommuteStore::load(&store_path(&dir)).unwrap_or_default();
+    match next_alarm_at(&store.commutes, unix_to_sgt(epoch_secs)) {
+        Some(dt) => dt.unix_timestamp() * 1000,
+        None => -1,
     }
 }

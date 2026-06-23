@@ -107,15 +107,12 @@ pub fn run_app() -> Result<(), slint::PlatformError> {
 )]
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
-    android_logger::init_once(
-        android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Info)
-            .with_tag("sgbr"),
-    );
+    android_bridge::ensure_logger();
     if slint::android::init(app).is_err() {
         return;
     }
-    // Phase B spike: prove the Rust->Kotlin JNI notification bridge on launch.
-    android_bridge::post_test_notification();
+    // Arm commute alarms from the saved store so windows fire even if the app
+    // is later closed (the foreground service re-arms thereafter).
+    android_bridge::arm_alarms();
     let _ = run_app();
 }

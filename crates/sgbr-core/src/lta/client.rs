@@ -10,8 +10,12 @@ use crate::lta::model::BusArrivalResponse;
 /// Global request timeout applied to every `fetch_arrivals` call.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Base URL for the Bus Arrival v2 endpoint (no query string).
-pub const BUS_ARRIVAL_URL: &str = "https://datamall2.mytransport.sg/ltaodataservice/BusArrivalv2";
+/// Base URL for the Bus Arrival v3 endpoint (no query string).
+///
+/// The older `BusArrivalv2` path now 404s at the `DataMall` gateway; v3 is the
+/// current endpoint (same `BusStopCode` query param and response shape).
+pub const BUS_ARRIVAL_URL: &str =
+    "https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival";
 
 /// Build the full request URL for a given stop code.
 #[must_use]
@@ -57,7 +61,7 @@ mod tests {
         let url = arrival_url(BUS_ARRIVAL_URL, "83139");
         assert_eq!(
             url,
-            "https://datamall2.mytransport.sg/ltaodataservice/BusArrivalv2?BusStopCode=83139"
+            "https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival?BusStopCode=83139"
         );
     }
 }
