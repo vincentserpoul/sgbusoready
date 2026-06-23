@@ -81,7 +81,7 @@ mod tests {
         let json = r#"{"value":[
             {"BusStopCode":"01012","RoadName":"Victoria St","Description":"Hotel Grand Pacific","Latitude":1.0,"Longitude":2.0}
         ]}"#;
-        let stops = parse_stops_page(json).unwrap_or_default();
+        let stops = parse_stops_page(json).expect("parse stops");
         assert_eq!(stops.len(), 1);
         assert_eq!(stops.first().map(|s| s.name.as_str()), Some("Hotel Grand Pacific"));
         assert_eq!(stops.first().map(|s| s.road.as_str()), Some("Victoria St"));
@@ -93,7 +93,7 @@ mod tests {
             {"ServiceNo":"15","BusStopCode":"83139","Direction":1,"StopSequence":5},
             {"ServiceNo":"52","BusStopCode":"83139","Direction":1,"StopSequence":9}
         ]}"#;
-        let pairs = parse_routes_page(json).unwrap_or_default();
+        let pairs = parse_routes_page(json).expect("parse routes");
         assert_eq!(pairs, vec![("83139".to_owned(), "15".to_owned()), ("83139".to_owned(), "52".to_owned())]);
     }
 
@@ -102,6 +102,13 @@ mod tests {
         let mut v = vec!["151".to_owned(), "2".to_owned(), "15".to_owned(), "151A".to_owned()];
         v.sort_by_key(|s| service_sort_key(s));
         assert_eq!(v, vec!["2", "15", "151", "151A"]);
+    }
+
+    #[test]
+    fn service_sort_non_numeric_sorts_last() {
+        let mut v = vec!["NR7".to_owned(), "2".to_owned(), "15".to_owned()];
+        v.sort_by_key(|s| service_sort_key(s));
+        assert_eq!(v, vec!["2", "15", "NR7"]);
     }
 
     #[test]

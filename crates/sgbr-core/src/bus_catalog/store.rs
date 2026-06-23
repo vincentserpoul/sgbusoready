@@ -29,6 +29,7 @@ pub fn save(catalog: &BusCatalog, path: &Path) -> Result<(), CoreError> {
 mod tests {
     use super::{load, save};
     use crate::bus_catalog::model::{BusCatalog, BusStop};
+    use crate::error::CoreError;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
@@ -46,14 +47,14 @@ mod tests {
             fetched_at_unix: 42,
         };
         let path = tmp_path("round");
-        let _ = save(&catalog, &path);
-        let loaded = load(&path).unwrap_or_default();
+        save(&catalog, &path).expect("save");
+        let loaded = load(&path).expect("load");
         assert_eq!(loaded, catalog);
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn load_missing_is_err() {
-        let _ = load(&tmp_path("nope")).unwrap_err();
+        assert!(matches!(load(&tmp_path("nope")), Err(CoreError::Io(_))));
     }
 }

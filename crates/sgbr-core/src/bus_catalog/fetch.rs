@@ -22,9 +22,7 @@ pub fn page_url(base: &str, skip: usize) -> String {
     format!("{base}?$skip={skip}")
 }
 
-fn fetch_page(account_key: &str, url: &str) -> Result<String, CoreError> {
-    let config = Agent::config_builder().timeout_global(Some(REQUEST_TIMEOUT)).build();
-    let agent = Agent::new_with_config(config);
+fn fetch_page(agent: &Agent, account_key: &str, url: &str) -> Result<String, CoreError> {
     agent
         .get(url)
         .header("AccountKey", account_key)
@@ -37,6 +35,7 @@ fn fetch_page(account_key: &str, url: &str) -> Result<String, CoreError> {
 }
 
 fn fetch_all<T>(
+    agent: &Agent,
     account_key: &str,
     base: &str,
     parse: impl Fn(&str) -> Result<Vec<T>, CoreError>,
@@ -44,7 +43,7 @@ fn fetch_all<T>(
     let mut all: Vec<T> = Vec::new();
     let mut skip = 0;
     loop {
-        let json = fetch_page(account_key, &page_url(base, skip))?;
+        let json = fetch_page(agent, account_key, &page_url(base, skip))?;
         let page = parse(&json)?;
         let count = page.len();
         all.extend(page);
@@ -62,8 +61,9 @@ fn fetch_all<T>(
 /// Returns [`CoreError::Http`]/[`CoreError::Parse`] on any page failure (partial
 /// data is discarded — the caller keeps its existing cache).
 pub fn fetch_catalog(account_key: &str, now: OffsetDateTime) -> Result<BusCatalog, CoreError> {
-    let stops = fetch_all(account_key, BUS_STOPS_URL, parse_stops_page)?;
-    let pairs = fetch_all(account_key, BUS_ROUTES_URL, parse_routes_page)?;
+    let agent = Agent::new_with_config(Agent::config_builder().timeout_global(Some(REQUEST_TIMEOUT)).build());
+    let stops = fetch_all(&agent, account_key, BUS_STOPS_URL, parse_stops_page)?;
+    let pairs = fetch_all(&agent, account_key, BUS_ROUTES_URL, parse_routes_page)?;
     Ok(BusCatalog {
         stops,
         services_by_stop: build_services_by_stop(pairs),

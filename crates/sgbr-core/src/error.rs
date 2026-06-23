@@ -22,7 +22,7 @@ pub enum CoreError {
     InvalidTimestamp(String),
 
     /// A filesystem operation on the persisted store failed.
-    #[error("commute store io failed: {0}")]
+    #[error("io failed: {0}")]
     Io(String),
 }
 

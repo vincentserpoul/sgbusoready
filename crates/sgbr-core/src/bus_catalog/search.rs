@@ -77,4 +77,10 @@ mod tests {
         let results = search(&cat, "83139", 10);
         assert_eq!(results.first().map(|s| s.code.as_str()), Some("83139"));
     }
+
+    #[test]
+    fn limit_zero_returns_empty() {
+        let cat = catalog();
+        assert!(search(&cat, "clementi", 0).is_empty());
+    }
 }

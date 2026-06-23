@@ -42,7 +42,7 @@ impl BusCatalog {
     /// True when older than [`CATALOG_TTL_SECS`] relative to `now`.
     #[must_use]
     pub const fn is_stale(&self, now: OffsetDateTime) -> bool {
-        now.unix_timestamp() - self.fetched_at_unix > CATALOG_TTL_SECS
+        now.unix_timestamp().saturating_sub(self.fetched_at_unix) > CATALOG_TTL_SECS
     }
 }
 
