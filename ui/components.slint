@@ -157,6 +157,10 @@ export component TextField inherits Rectangle {
     in property <string> placeholder;
     in-out property <string> text <=> ti.text;
     callback edited();
+    // Drop keyboard focus (e.g. when navigating away from a search screen).
+    public function defocus() {
+        ti.clear-focus();
+    }
     height: 46px;
     border-radius: 12px;
     background: Palette.surface;
@@ -193,7 +197,7 @@ component NumStepper inherits VerticalLayout {
     spacing: 1px;
     Rectangle {
         height: 16px;
-        Text { text: "▲"; font-size: 11px; color: Palette.text-dim; }
+        Text { text: "↑"; font-size: 11px; color: Palette.text-dim; }
         TouchArea { clicked => { root.changed(root.value >= root.max ? 0 : root.value + 1); } }
     }
     Text {
@@ -205,7 +209,7 @@ component NumStepper inherits VerticalLayout {
     }
     Rectangle {
         height: 16px;
-        Text { text: "▼"; font-size: 11px; color: Palette.text-dim; }
+        Text { text: "↓"; font-size: 11px; color: Palette.text-dim; }
         TouchArea { clicked => { root.changed(root.value <= 0 ? root.max : root.value - 1); } }
     }
 }

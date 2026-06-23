@@ -228,12 +228,15 @@ export component AppWindow inherits Window {
             AppBar {
                 title: "Choose stop";
                 show-back: true;
-                back => { root.screen = Screen.editor; }
+                back => {
+                    sf.defocus();
+                    root.screen = Screen.editor;
+                }
             }
             VerticalLayout {
                 padding: 16px;
                 spacing: 10px;
-                TextField {
+                sf := TextField {
                     placeholder: "Search name or code";
                     text <=> root.search-query;
                     edited => { root.search-changed(); }
@@ -252,6 +255,7 @@ export component AppWindow inherits Window {
                             name: r.name;
                             sub: r.road + " · " + r.code;
                             clicked => {
+                                sf.defocus();
                                 root.stop-picked(r.code);
                                 root.screen = Screen.editor;
                             }

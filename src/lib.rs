@@ -48,7 +48,9 @@ mod android_bridge;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
+use sgbr_core::bus_catalog::fetch::fetch_catalog;
 use sgbr_core::bus_catalog::model::BusCatalog;
 use sgbr_core::bus_catalog::search::search as catalog_search;
 use sgbr_core::bus_catalog::store as catalog_store;
@@ -59,12 +61,83 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use time::macros::offset;
 use time::{OffsetDateTime, Weekday};
 
-type Catalog = Rc<RefCell<Option<BusCatalog>>>;
+/// Catalog is shared with a background refresh thread, so it's `Arc<Mutex>`.
+type Catalog = Arc<Mutex<Option<BusCatalog>>>;
 type Store = Rc<RefCell<CommuteStore>>;
+
+/// LTA `DataMall` `AccountKey`, injected at build time (empty if unset → no refresh).
+const ACCOUNT_KEY: &str = match option_env!("LTA_API_ACCOUNT_KEY") {
+    Some(k) => k,
+    None => "",
+};
 
 /// Wall-clock "now" in Singapore time (UTC+8, no DST).
 fn now_sgt() -> OffsetDateTime {
     OffsetDateTime::now_utc().to_offset(offset!(+8))
+}
+
+/// Run `f` with a borrow of the catalog, tolerating lock poisoning.
+fn with_catalog<R>(catalog: &Catalog, f: impl FnOnce(Option<&BusCatalog>) -> R) -> R {
+    match catalog.lock() {
+        Ok(guard) => f(guard.as_ref()),
+        Err(poisoned) => f(poisoned.into_inner().as_ref()),
+    }
+}
+
+/// Re-run the current stop search and refresh the loading flag (used both on
+/// keystroke and after a background catalog refresh lands).
+fn refresh_search(window: &AppWindow, catalog: &Catalog) {
+    let query = window.get_search_query().to_string();
+    let results: Vec<StopResult> = with_catalog(catalog, |cat| {
+        cat.map(|k| {
+            catalog_search(k, &query, 30)
+                .into_iter()
+                .map(|s| StopResult {
+                    code: SharedString::from(s.code.as_str()),
+                    name: SharedString::from(s.name.as_str()),
+                    road: SharedString::from(s.road.as_str()),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    });
+    window.set_search_results(ModelRc::new(VecModel::from(results)));
+    window.set_catalog_loading(with_catalog(catalog, |c| c.is_none()));
+}
+
+/// If the catalog is missing or stale (and a key is compiled in), fetch a fresh
+/// one on a background thread, persist it, swap it in, and refresh the UI.
+fn spawn_refresh_if_stale(catalog: &Catalog, window: &AppWindow, store_path: &Path) {
+    if ACCOUNT_KEY.is_empty() {
+        return;
+    }
+    let now = now_sgt();
+    let needs = with_catalog(catalog, |c| c.is_none_or(|k| k.is_stale(now)));
+    if !needs {
+        return;
+    }
+    let catalog = Arc::clone(catalog);
+    let weak = window.as_weak();
+    let cat_path = catalog_path(store_path);
+    let commutes_path = store_path.to_path_buf();
+    std::thread::spawn(move || {
+        let Ok(fresh) = fetch_catalog(ACCOUNT_KEY, OffsetDateTime::now_utc()) else {
+            return;
+        };
+        let _ = catalog_store::save(&fresh, &cat_path);
+        if let Ok(mut guard) = catalog.lock() {
+            *guard = Some(fresh);
+        }
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak.upgrade() {
+                // The store is persisted on every change, so disk == memory; load
+                // it to relabel rows with stop names now the catalog is available.
+                let store = CommuteStore::load(&commutes_path).unwrap_or_default();
+                with_catalog(&catalog, |cat| rebuild_rows(&w, &store, cat));
+                refresh_search(&w, &catalog);
+            }
+        });
+    });
 }
 
 fn catalog_path(store_path: &Path) -> PathBuf {
@@ -233,9 +306,10 @@ fn handle_save(window: &AppWindow, store: &Store, catalog: &Catalog, path: &Path
     persist(&s, path);
     drop(s);
 
-    let cat = catalog.borrow();
-    populate_form(window, None, -1, cat.as_ref());
-    rebuild_rows(window, &store.borrow(), cat.as_ref());
+    with_catalog(catalog, |cat| {
+        populate_form(window, None, -1, cat);
+        rebuild_rows(window, &store.borrow(), cat);
+    });
     window.set_screen(Screen::List);
 }
 
@@ -248,18 +322,21 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
     let store: Store = Rc::new(RefCell::new(
         CommuteStore::load(&store_path).unwrap_or_default(),
     ));
-    let catalog: Catalog = Rc::new(RefCell::new(
+    let catalog: Catalog = Arc::new(Mutex::new(
         catalog_store::load(&catalog_path(&store_path)).ok(),
     ));
 
     let window = AppWindow::new()?;
-    rebuild_rows(&window, &store.borrow(), catalog.borrow().as_ref());
-    populate_form(&window, None, -1, catalog.borrow().as_ref());
-    window.set_catalog_loading(catalog.borrow().is_none());
+    with_catalog(&catalog, |cat| {
+        rebuild_rows(&window, &store.borrow(), cat);
+        populate_form(&window, None, -1, cat);
+    });
+    window.set_catalog_loading(with_catalog(&catalog, |c| c.is_none()));
+    spawn_refresh_if_stale(&catalog, &window, &store_path);
 
     let w = window.as_weak();
     let s = Rc::clone(&store);
-    let c = Rc::clone(&catalog);
+    let c = Arc::clone(&catalog);
     let p = Rc::clone(&store_path);
     window.on_save(move || {
         if let Some(w) = w.upgrade() {
@@ -269,7 +346,7 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
 
     let w = window.as_weak();
     let s = Rc::clone(&store);
-    let c = Rc::clone(&catalog);
+    let c = Arc::clone(&catalog);
     let p = Rc::clone(&store_path);
     window.on_delete(move |index| {
         if let Some(w) = w.upgrade()
@@ -281,66 +358,49 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
                 persist(&store, &p);
             }
             drop(store);
-            rebuild_rows(&w, &s.borrow(), c.borrow().as_ref());
+            with_catalog(&c, |cat| rebuild_rows(&w, &s.borrow(), cat));
         }
     });
 
     let w = window.as_weak();
     let s = Rc::clone(&store);
-    let c = Rc::clone(&catalog);
+    let c = Arc::clone(&catalog);
     window.on_edit(move |index| {
         if let Some(w) = w.upgrade()
             && let Ok(i) = usize::try_from(index)
         {
             let commute = s.borrow().commutes.get(i).cloned();
-            populate_form(&w, commute.as_ref(), index, c.borrow().as_ref());
+            with_catalog(&c, |cat| populate_form(&w, commute.as_ref(), index, cat));
         }
     });
 
     let w = window.as_weak();
-    let c = Rc::clone(&catalog);
+    let c = Arc::clone(&catalog);
     window.on_new_commute(move || {
         if let Some(w) = w.upgrade() {
-            populate_form(&w, None, -1, c.borrow().as_ref());
+            with_catalog(&c, |cat| populate_form(&w, None, -1, cat));
         }
     });
 
     let w = window.as_weak();
-    let c = Rc::clone(&catalog);
+    let c = Arc::clone(&catalog);
     window.on_search_changed(move || {
         if let Some(w) = w.upgrade() {
-            let query = w.get_search_query().to_string();
-            let cat = c.borrow();
-            let results: Vec<StopResult> = cat
-                .as_ref()
-                .map(|k| {
-                    catalog_search(k, &query, 30)
-                        .into_iter()
-                        .map(|s| StopResult {
-                            code: SharedString::from(s.code.as_str()),
-                            name: SharedString::from(s.name.as_str()),
-                            road: SharedString::from(s.road.as_str()),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            w.set_search_results(ModelRc::new(VecModel::from(results)));
-            w.set_catalog_loading(cat.is_none());
+            refresh_search(&w, &c);
         }
     });
 
     let w = window.as_weak();
-    let c = Rc::clone(&catalog);
+    let c = Arc::clone(&catalog);
     window.on_stop_picked(move |code| {
         if let Some(w) = w.upgrade() {
-            let cat = c.borrow();
-            let name = cat
-                .as_ref()
-                .and_then(|k| k.stop(&code))
-                .map_or_else(String::new, |s| s.name.clone());
+            let name = with_catalog(&c, |cat| {
+                cat.and_then(|k| k.stop(&code))
+                    .map_or_else(String::new, |s| s.name.clone())
+            });
             w.set_form_stop_code(code.clone());
             w.set_form_stop_name(SharedString::from(name));
-            w.set_stop_services(services_model(cat.as_ref(), &code));
+            w.set_stop_services(with_catalog(&c, |cat| services_model(cat, &code)));
             w.set_form_line(SharedString::new());
         }
     });
