@@ -1,25 +1,171 @@
-struct ServiceRow {
-    service_no: string,
-    timing: string,
+import { LineEdit, SpinBox, Button, CheckBox, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+// One commute as shown in the list. `status` is the in-app line: either
+// "active now" or the `format_see_you_soon` text rendered by Rust.
+struct CommuteRow {
+    label: string,
+    status: string,
+}
+
+component CommuteListRow inherits Rectangle {
+    in property <string> label;
+    in property <string> status;
+    callback edit();
+    callback move-up();
+    callback move-down();
+    callback remove();
+
+    height: 56px;
+    background: #f2f2f2;
+    border-radius: 6px;
+
+    HorizontalBox {
+        padding: 8px;
+        spacing: 6px;
+        alignment: space-between;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            Text { text: root.label; font-weight: 700; overflow: elide; }
+            Text { text: root.status; font-size: 12px; color: #555; overflow: elide; }
+        }
+        Button { text: "Edit"; max-height: 36px; clicked => { root.edit(); } }
+        Button { text: "↑"; max-height: 36px; max-width: 40px; clicked => { root.move-up(); } }
+        Button { text: "↓"; max-height: 36px; max-width: 40px; clicked => { root.move-down(); } }
+        Button { text: "✕"; max-height: 36px; max-width: 40px; clicked => { root.remove(); } }
+    }
 }
 
 export component AppWindow inherits Window {
-    in property <[ServiceRow]> rows;
-    title: "SG Bus Ready — spike";
-    preferred-width: 320px;
-    preferred-height: 400px;
+    in property <[CommuteRow]> rows;
 
-    VerticalLayout {
-        padding: 16px;
-        spacing: 8px;
-        Text {
-            text: "Stop 83139";
-            font-size: 20px;
-            font-weight: 700;
+    // Form state. `editing-index` is the list index being edited, or -1 to add
+    // a new commute. Rust reads these on `save` and writes them on `edit`/`new`.
+    in-out property <int> editing-index: -1;
+    in-out property <string> form-line;
+    in-out property <string> form-stop;
+    in-out property <int> form-start-hour: 8;
+    in-out property <int> form-start-minute: 0;
+    in-out property <int> form-end-hour: 9;
+    in-out property <int> form-end-minute: 0;
+    in-out property <bool> form-day-mon;
+    in-out property <bool> form-day-tue;
+    in-out property <bool> form-day-wed;
+    in-out property <bool> form-day-thu;
+    in-out property <bool> form-day-fri;
+    in-out property <bool> form-day-sat;
+    in-out property <bool> form-day-sun;
+    in-out property <string> error-text;
+
+    callback save();
+    callback delete(int);
+    callback move-up(int);
+    callback move-down(int);
+    callback edit(int);
+    callback new-commute();
+
+    title: "SG Bus Ready";
+    preferred-width: 400px;
+    preferred-height: 720px;
+
+    HorizontalLayout {
+        // Center a fixed-width column so the layout stays tidy whatever the
+        // window size (desktop) and matches the phone width (Android).
+        Rectangle { horizontal-stretch: 1; }
+        VerticalBox {
+            horizontal-stretch: 0;
+            max-width: 400px;
+            min-width: 320px;
+            padding: 16px;
+
+            Text {
+                text: "Commutes";
+                font-size: 22px;
+                font-weight: 800;
+            }
+
+            ScrollView {
+                vertical-stretch: 1;
+                min-height: 200px;
+                VerticalBox {
+                    padding: 0px;
+                    spacing: 6px;
+                    alignment: start;
+                    for row[idx] in root.rows: CommuteListRow {
+                        label: row.label;
+                        status: row.status;
+                        edit => { root.edit(idx); }
+                        move-up => { root.move-up(idx); }
+                        move-down => { root.move-down(idx); }
+                        remove => { root.delete(idx); }
+                    }
+                    if root.rows.length == 0: Text {
+                        text: "No commutes yet. Add one below.";
+                        color: #777;
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: #ddd; }
+
+            Text {
+                text: root.editing-index < 0 ? "Add commute" : "Edit commute";
+                font-weight: 700;
+            }
+
+            HorizontalBox {
+                padding: 0px;
+                Text { text: "Line"; vertical-alignment: center; width: 48px; }
+                LineEdit { placeholder-text: "e.g. 15"; text <=> root.form-line; }
+            }
+            HorizontalBox {
+                padding: 0px;
+                Text { text: "Stop"; vertical-alignment: center; width: 48px; }
+                LineEdit { placeholder-text: "e.g. 83139"; text <=> root.form-stop; }
+            }
+
+            HorizontalBox {
+                padding: 0px;
+                spacing: 2px;
+                CheckBox { text: "Mo"; checked <=> root.form-day-mon; }
+                CheckBox { text: "Tu"; checked <=> root.form-day-tue; }
+                CheckBox { text: "We"; checked <=> root.form-day-wed; }
+                CheckBox { text: "Th"; checked <=> root.form-day-thu; }
+                CheckBox { text: "Fr"; checked <=> root.form-day-fri; }
+                CheckBox { text: "Sa"; checked <=> root.form-day-sat; }
+                CheckBox { text: "Su"; checked <=> root.form-day-sun; }
+            }
+
+            HorizontalBox {
+                padding: 0px;
+                Text { text: "Start"; vertical-alignment: center; width: 48px; }
+                SpinBox { value <=> root.form-start-hour; minimum: 0; maximum: 23; }
+                SpinBox { value <=> root.form-start-minute; minimum: 0; maximum: 59; }
+            }
+            HorizontalBox {
+                padding: 0px;
+                Text { text: "End"; vertical-alignment: center; width: 48px; }
+                SpinBox { value <=> root.form-end-hour; minimum: 0; maximum: 23; }
+                SpinBox { value <=> root.form-end-minute; minimum: 0; maximum: 59; }
+            }
+
+            if root.error-text != "": Text {
+                text: root.error-text;
+                color: #c0392b;
+                wrap: word-wrap;
+            }
+
+            HorizontalBox {
+                padding: 0px;
+                Button {
+                    text: root.editing-index < 0 ? "Add" : "Save";
+                    primary: true;
+                    clicked => { root.save(); }
+                }
+                Button { text: "Clear"; clicked => { root.new-commute(); } }
+            }
         }
-        for row in root.rows: HorizontalLayout {
-            Text { text: row.service_no; font-weight: 600; width: 64px; }
-            Text { text: row.timing; }
-        }
+        Rectangle { horizontal-stretch: 1; }
     }
 }
