@@ -55,52 +55,57 @@ impl Weekdays {
 /// Why a [`Commute`] failed validation.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum CommuteError {
-    #[error("commute line must not be empty")]
-    EmptyLine,
-    #[error("commute stop must not be empty")]
-    EmptyStop,
     #[error("commute must select at least one day")]
     NoDays,
-    #[error("commute end time must be after its start time")]
-    EndNotAfterStart,
     #[error("commute start or end time is out of range")]
     InvalidTime,
+    #[error("commute end time must be after its start time")]
+    EndNotAfterStart,
+    #[error("commute must have at least one stop")]
+    NoStops,
+    #[error("commute stop code must not be empty")]
+    StopEmptyCode,
+    #[error("commute stop must track at least one bus")]
+    StopNoBuses,
 }
 
-/// A recurring commute: one bus line at one stop, on a set of weekdays, within
-/// a single-day time window (`start` < `end`, no overnight wrap).
+/// One stop within a commute and the buses tracked there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommuteStop {
+    /// LTA bus stop code, e.g. `"83139"`.
+    pub code: String,
+    /// Cached display name, e.g. `"Opp Blk 123"`.
+    pub name: String,
+    /// Service numbers tracked at this stop, e.g. `["14", "14e"]` (>= 1).
+    pub buses: Vec<String>,
+}
+
+/// A recurring commute: a set of stops (each with its own tracked buses), on a
+/// set of weekdays, within a single-day time window (`start` < `end`, no
+/// overnight wrap).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Commute {
-    /// Bus service number, e.g. `"14"`.
-    pub line: String,
-    /// LTA bus stop code, e.g. `"83139"`.
-    pub stop: String,
+    /// Optional user label; falls back to a stop-derived label.
+    pub label: Option<String>,
     /// Days the window is active.
     pub days: Weekdays,
     /// Window open time (inclusive).
     pub start: TimeOfDay,
     /// Window close time (exclusive).
     pub end: TimeOfDay,
-    /// Optional user label; falls back to `"<line> @ <stop>"`.
-    pub label: Option<String>,
+    /// Stops tracked by this commute (>= 1).
+    pub stops: Vec<CommuteStop>,
 }
 
 impl Commute {
     /// Construct a validated commute. See [`CommuteError`] for failure modes.
     pub fn new(
-        line: &str,
-        stop: &str,
+        label: Option<String>,
         days: Weekdays,
         start: TimeOfDay,
         end: TimeOfDay,
-        label: Option<String>,
+        stops: Vec<CommuteStop>,
     ) -> Result<Self, CommuteError> {
-        if line.is_empty() {
-            return Err(CommuteError::EmptyLine);
-        }
-        if stop.is_empty() {
-            return Err(CommuteError::EmptyStop);
-        }
         if days.is_empty() {
             return Err(CommuteError::NoDays);
         }
@@ -110,22 +115,38 @@ impl Commute {
         if end <= start {
             return Err(CommuteError::EndNotAfterStart);
         }
+        if stops.is_empty() {
+            return Err(CommuteError::NoStops);
+        }
+        for stop in &stops {
+            if stop.code.is_empty() {
+                return Err(CommuteError::StopEmptyCode);
+            }
+            if stop.buses.is_empty() {
+                return Err(CommuteError::StopNoBuses);
+            }
+        }
         Ok(Self {
-            line: line.to_owned(),
-            stop: stop.to_owned(),
+            label,
             days,
             start,
             end,
-            label,
+            stops,
         })
     }
 
-    /// The label to show, falling back to `"<line> @ <stop>"`.
+    /// The label to show. Falls back to the first stop's name, suffixed with
+    /// `" +N"` when there is more than one stop.
     #[must_use]
     pub fn display_label(&self) -> String {
-        match &self.label {
-            Some(l) => l.clone(),
-            None => format!("{} @ {}", self.line, self.stop),
+        if let Some(label) = &self.label {
+            return label.clone();
+        }
+        match self.stops.split_first() {
+            Some((first, [])) => first.name.clone(),
+            Some((first, rest)) => format!("{} +{}", first.name, rest.len()),
+            // Unreachable for a validated commute: `Commute::new` rejects empty `stops`.
+            None => String::new(),
         }
     }
 }
@@ -134,8 +155,27 @@ impl Commute {
 mod tests {
     use super::TimeOfDay;
     use super::Weekdays;
-    use super::{Commute, CommuteError};
+    use super::{Commute, CommuteError, CommuteStop};
     use time::Weekday::{Friday, Monday, Saturday, Sunday, Tuesday};
+
+    fn stop(code: &str, name: &str, buses: &[&str]) -> CommuteStop {
+        CommuteStop {
+            code: code.to_owned(),
+            name: name.to_owned(),
+            buses: buses.iter().map(|b| (*b).to_owned()).collect(),
+        }
+    }
+
+    fn weekday_commute() -> Commute {
+        Commute::new(
+            None,
+            Weekdays::from_days(&[Monday, Tuesday]),
+            TimeOfDay { hour: 8, minute: 0 },
+            TimeOfDay { hour: 9, minute: 0 },
+            vec![stop("83139", "Opp Blk 123", &["14"])],
+        )
+        .expect("valid commute")
+    }
 
     #[test]
     fn orders_by_hour_then_minute() {
@@ -210,63 +250,50 @@ mod tests {
         assert_eq!(wd, back);
     }
 
-    fn weekday_commute() -> Commute {
-        Commute::new(
-            "14",
-            "83139",
-            Weekdays::from_days(&[Monday, Tuesday]),
-            TimeOfDay { hour: 8, minute: 0 },
-            TimeOfDay { hour: 9, minute: 0 },
-            None,
-        )
-        .expect("valid commute")
+    #[test]
+    fn label_defaults_to_single_stop_name() {
+        let c = weekday_commute();
+        assert_eq!(c.display_label(), "Opp Blk 123");
     }
 
     #[test]
-    fn label_defaults_to_line_at_stop() {
-        let c = weekday_commute();
-        assert_eq!(c.display_label(), "14 @ 83139");
+    fn label_defaults_to_first_stop_plus_count() {
+        let c = Commute::new(
+            None,
+            Weekdays::from_days(&[Monday]),
+            TimeOfDay { hour: 8, minute: 0 },
+            TimeOfDay { hour: 9, minute: 0 },
+            vec![
+                stop("83139", "Opp Blk 123", &["14"]),
+                stop("17009", "Bef Clementi Stn", &["96"]),
+            ],
+        )
+        .expect("valid commute");
+        assert_eq!(c.display_label(), "Opp Blk 123 +1");
     }
 
     #[test]
     fn custom_label_overrides_default() {
         let c = Commute::new(
-            "14",
-            "83139",
+            Some("Morning work".to_owned()),
             Weekdays::from_days(&[Friday]),
             TimeOfDay { hour: 8, minute: 0 },
             TimeOfDay { hour: 9, minute: 0 },
-            Some("Morning work".to_owned()),
+            vec![stop("83139", "Opp Blk 123", &["14"])],
         )
         .expect("valid commute");
         assert_eq!(c.display_label(), "Morning work");
     }
 
     #[test]
-    fn rejects_empty_line_and_stop() {
-        let days = Weekdays::from_days(&[Monday]);
-        let start = TimeOfDay { hour: 8, minute: 0 };
-        let end = TimeOfDay { hour: 9, minute: 0 };
-        assert!(matches!(
-            Commute::new("", "83139", days, start, end, None),
-            Err(CommuteError::EmptyLine)
-        ));
-        assert!(matches!(
-            Commute::new("14", "", days, start, end, None),
-            Err(CommuteError::EmptyStop)
-        ));
-    }
-
-    #[test]
     fn rejects_no_days() {
         assert!(matches!(
             Commute::new(
-                "14",
-                "83139",
+                None,
                 Weekdays::from_days(&[]),
                 TimeOfDay { hour: 8, minute: 0 },
                 TimeOfDay { hour: 9, minute: 0 },
-                None,
+                vec![stop("83139", "Opp Blk 123", &["14"])],
             ),
             Err(CommuteError::NoDays)
         ));
@@ -274,15 +301,13 @@ mod tests {
 
     #[test]
     fn rejects_end_not_after_start() {
-        let days = Weekdays::from_days(&[Monday]);
         assert!(matches!(
             Commute::new(
-                "14",
-                "83139",
-                days,
-                TimeOfDay { hour: 9, minute: 0 },
-                TimeOfDay { hour: 9, minute: 0 },
                 None,
+                Weekdays::from_days(&[Monday]),
+                TimeOfDay { hour: 9, minute: 0 },
+                TimeOfDay { hour: 9, minute: 0 },
+                vec![stop("83139", "Opp Blk 123", &["14"])],
             ),
             Err(CommuteError::EndNotAfterStart)
         ));
@@ -290,20 +315,60 @@ mod tests {
 
     #[test]
     fn rejects_out_of_range_time() {
-        let days = Weekdays::from_days(&[Monday]);
         assert!(matches!(
             Commute::new(
-                "14",
-                "83139",
-                days,
+                None,
+                Weekdays::from_days(&[Monday]),
                 TimeOfDay { hour: 8, minute: 0 },
                 TimeOfDay {
                     hour: 24,
                     minute: 0
                 },
-                None,
+                vec![stop("83139", "Opp Blk 123", &["14"])],
             ),
             Err(CommuteError::InvalidTime)
+        ));
+    }
+
+    #[test]
+    fn rejects_no_stops() {
+        assert!(matches!(
+            Commute::new(
+                None,
+                Weekdays::from_days(&[Monday]),
+                TimeOfDay { hour: 8, minute: 0 },
+                TimeOfDay { hour: 9, minute: 0 },
+                vec![],
+            ),
+            Err(CommuteError::NoStops)
+        ));
+    }
+
+    #[test]
+    fn rejects_empty_stop_code() {
+        assert!(matches!(
+            Commute::new(
+                None,
+                Weekdays::from_days(&[Monday]),
+                TimeOfDay { hour: 8, minute: 0 },
+                TimeOfDay { hour: 9, minute: 0 },
+                vec![stop("", "Opp Blk 123", &["14"])],
+            ),
+            Err(CommuteError::StopEmptyCode)
+        ));
+    }
+
+    #[test]
+    fn rejects_stop_with_no_buses() {
+        assert!(matches!(
+            Commute::new(
+                None,
+                Weekdays::from_days(&[Monday]),
+                TimeOfDay { hour: 8, minute: 0 },
+                TimeOfDay { hour: 9, minute: 0 },
+                vec![stop("83139", "Opp Blk 123", &[])],
+            ),
+            Err(CommuteError::StopNoBuses)
         ));
     }
 

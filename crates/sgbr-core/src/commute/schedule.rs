@@ -22,26 +22,28 @@ pub fn next_alarm_at(commutes: &[Commute], now: OffsetDateTime) -> Option<Offset
 #[cfg(test)]
 mod tests {
     use super::{active_commutes_at, next_alarm_at};
-    use crate::commute::model::{Commute, TimeOfDay, Weekdays};
+    use crate::commute::model::{Commute, CommuteStop, TimeOfDay, Weekdays};
     use time::Weekday::{Monday, Tuesday};
     use time::macros::datetime;
 
     fn morning() -> Commute {
         Commute::new(
-            "14",
-            "83139",
+            None,
             Weekdays::from_days(&[Monday, Tuesday]),
             TimeOfDay { hour: 8, minute: 0 },
             TimeOfDay { hour: 9, minute: 0 },
-            None,
+            vec![CommuteStop {
+                code: "83139".to_owned(),
+                name: "Opp Blk 123".to_owned(),
+                buses: vec!["14".to_owned()],
+            }],
         )
         .expect("valid commute")
     }
 
     fn evening() -> Commute {
         Commute::new(
-            "67",
-            "84009",
+            None,
             Weekdays::from_days(&[Monday, Tuesday]),
             TimeOfDay {
                 hour: 18,
@@ -51,7 +53,11 @@ mod tests {
                 hour: 19,
                 minute: 0,
             },
-            None,
+            vec![CommuteStop {
+                code: "84009".to_owned(),
+                name: "Bef Clementi Stn".to_owned(),
+                buses: vec!["67".to_owned()],
+            }],
         )
         .expect("valid commute")
     }
@@ -62,7 +68,7 @@ mod tests {
         let list = vec![morning(), evening()];
         let active = active_commutes_at(&list, datetime!(2026-06-22 08:30:00 +8));
         assert_eq!(active.len(), 1);
-        assert_eq!(active[0].line, "14");
+        assert_eq!(active[0].stops[0].code, "83139");
     }
 
     #[test]

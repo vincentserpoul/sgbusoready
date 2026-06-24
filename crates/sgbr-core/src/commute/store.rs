@@ -55,18 +55,21 @@ impl CommuteStore {
 #[cfg(test)]
 mod tests {
     use super::CommuteStore;
-    use crate::commute::model::{Commute, TimeOfDay, Weekdays};
+    use crate::commute::model::{Commute, CommuteStop, TimeOfDay, Weekdays};
     use std::path::PathBuf;
     use time::Weekday::Monday;
 
     fn sample_store() -> CommuteStore {
         let c = Commute::new(
-            "14",
-            "83139",
+            None,
             Weekdays::from_days(&[Monday]),
             TimeOfDay { hour: 8, minute: 0 },
             TimeOfDay { hour: 9, minute: 0 },
-            None,
+            vec![CommuteStop {
+                code: "83139".to_owned(),
+                name: "Opp Blk 123".to_owned(),
+                buses: vec!["14".to_owned()],
+            }],
         )
         .expect("valid commute");
         CommuteStore { commutes: vec![c] }

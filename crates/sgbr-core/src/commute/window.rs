@@ -70,18 +70,21 @@ impl Commute {
 
 #[cfg(test)]
 mod tests {
-    use crate::commute::model::{Commute, TimeOfDay, Weekdays};
+    use crate::commute::model::{Commute, CommuteStop, TimeOfDay, Weekdays};
     use time::Weekday::{Friday, Monday, Tuesday};
     use time::macros::datetime;
 
     fn mon_fri_8_to_9() -> Commute {
         Commute::new(
-            "14",
-            "83139",
+            None,
             Weekdays::from_days(&[Monday, Tuesday, Friday]),
             TimeOfDay { hour: 8, minute: 0 },
             TimeOfDay { hour: 9, minute: 0 },
-            None,
+            vec![CommuteStop {
+                code: "83139".to_owned(),
+                name: "Opp Blk 123".to_owned(),
+                buses: vec!["14".to_owned()],
+            }],
         )
         .expect("valid commute")
     }
