@@ -1,7 +1,7 @@
 //! Android JNI bridge.
 //!
 //! Two directions:
-//! - **Kotlin → Rust** (`Java_com_sgbusoready_CommuteNative_*`): the
+//! - **Kotlin → Rust** (`Java_com_sgbuscommute_CommuteNative_*`): the
 //!   foreground service / scheduler ask Rust what to show and when to wake.
 //!   The `JNIEnv` is supplied and the calling thread is a normal Java thread,
 //!   so no class-loader dance is needed.
@@ -21,17 +21,17 @@ use std::ffi::c_void;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use jni::errors::Error as JniError;
 use jni::objects::{JClass, JObject, JString, JValue};
 use jni::sys::{jlong, jstring};
 use jni::{AttachGuard, JNIEnv, JavaVM};
-use jni::errors::Error as JniError;
 use time::OffsetDateTime;
 use time::macros::offset;
 
-use sgbr_core::commute::display::format_live_update;
-use sgbr_core::commute::schedule::{active_commutes_at, next_alarm_at};
+use sgbr_core::commute::display::format_active_notification;
+use sgbr_core::commute::schedule::{active_stop_plans, next_alarm_at};
 use sgbr_core::commute::store::CommuteStore;
-use sgbr_core::lta::arrival::service_arrivals;
+use sgbr_core::lta::arrival::{StopArrivals, stop_arrivals};
 use sgbr_core::lta::client::fetch_arrivals;
 
 /// LTA DataMall AccountKey, injected at build time from `LTA_API_ACCOUNT_KEY`
@@ -66,26 +66,30 @@ fn store_path(files_dir: &str) -> PathBuf {
     p
 }
 
-/// Render the Live Update body for every active commute, one per line.
-/// Empty string => nothing active (caller stops the service).
+/// Render the Live Update body across all active commutes: one line per distinct
+/// stop (union of tracked buses), time-first with buses bracketed. Empty string
+/// => nothing active (caller stops the service).
 fn render_active(files_dir: &str, now: OffsetDateTime) -> String {
     let store = CommuteStore::load(&store_path(files_dir)).unwrap_or_default();
-    let mut lines: Vec<String> = Vec::new();
-    for c in active_commutes_at(&store.commutes, now) {
-        let mins = match fetch_arrivals(ACCOUNT_KEY, &c.stop) {
-            Ok(resp) => service_arrivals(&resp, now)
-                .into_iter()
-                .find(|s| s.service_no == c.line)
-                .map(|s| s.minutes)
-                .unwrap_or_default(),
-            Err(e) => {
-                log::warn!("fetch {} @ {} failed: {e}", c.line, c.stop);
-                Vec::new()
-            }
-        };
-        lines.push(format_live_update(&c.line, &mins));
+    let plans = active_stop_plans(&store.commutes, now);
+    if plans.is_empty() {
+        return String::new();
     }
-    lines.join("\n")
+    let stops: Vec<StopArrivals> = plans
+        .iter()
+        .map(|plan| match fetch_arrivals(ACCOUNT_KEY, &plan.code) {
+            Ok(resp) => stop_arrivals(&plan.code, &plan.name, &plan.buses, &resp, now),
+            Err(e) => {
+                log::warn!("fetch stop {} failed: {e}", plan.code);
+                StopArrivals {
+                    code: plan.code.clone(),
+                    name: plan.name.clone(),
+                    items: Vec::new(),
+                }
+            }
+        })
+        .collect();
+    format_active_notification(&stops)
 }
 
 /// Resolve an app class by binary name through the Activity's class loader.
@@ -118,7 +122,7 @@ fn arm_alarms_inner() -> Result<(), JniError> {
     let mut env = vm.attach_current_thread()?;
     // SAFETY: ndk-context holds the running Activity (a Context) jobject.
     let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
-    let scheduler = load_app_class(&mut env, &activity, "com.sgbusoready.AlarmScheduler")?;
+    let scheduler = load_app_class(&mut env, &activity, "com.sgbuscommute.AlarmScheduler")?;
     let call = env.call_static_method(
         &scheduler,
         "arm",
@@ -148,7 +152,7 @@ fn start_commute_service_inner() -> Result<(), JniError> {
     let mut env = vm.attach_current_thread()?;
     // SAFETY: ndk-context holds a running Context jobject (the Application).
     let context = unsafe { JObject::from_raw(ctx.context().cast()) };
-    let service = load_app_class(&mut env, &context, "com.sgbusoready.CommuteService")?;
+    let service = load_app_class(&mut env, &context, "com.sgbuscommute.CommuteService")?;
     let call = env.call_static_method(
         &service,
         "start",
@@ -178,7 +182,7 @@ fn status_bar_top_dp_inner() -> Result<i32, JniError> {
     let mut env = vm.attach_current_thread()?;
     // SAFETY: ndk-context holds the running Activity (a Context) jobject.
     let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
-    let helper = load_app_class(&mut env, &activity, "com.sgbusoready.InsetsHelper")?;
+    let helper = load_app_class(&mut env, &activity, "com.sgbuscommute.InsetsHelper")?;
     let value = env.call_static_method(
         &helper,
         "statusBarTopDp",
@@ -209,8 +213,9 @@ fn show_time_picker_inner(tag: &str, hour: i32, minute: i32) -> Result<(), JniEr
     let mut env = vm.attach_current_thread()?;
     // SAFETY: the stashed NativeActivity jobject is a global ref held for the
     // activity's lifetime; a dialog requires the Activity, not the Application.
-    let activity = unsafe { JObject::from_raw(ACTIVITY_PTR.load(Ordering::Relaxed) as jni::sys::jobject) };
-    let helper = load_app_class(&mut env, &activity, "com.sgbusoready.TimePicker")?;
+    let activity =
+        unsafe { JObject::from_raw(ACTIVITY_PTR.load(Ordering::Relaxed) as jni::sys::jobject) };
+    let helper = load_app_class(&mut env, &activity, "com.sgbuscommute.TimePicker")?;
     let jtag = env.new_string(tag)?;
     let call = env.call_static_method(
         &helper,
@@ -245,7 +250,7 @@ pub fn show_time_picker(tag: &str, hour: i32, minute: i32) {
 
 /// `CommuteNative.renderActive(filesDir, epochSecs) -> String`
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_com_sgbusoready_CommuteNative_renderActive(
+pub extern "C" fn Java_com_sgbuscommute_CommuteNative_renderActive(
     mut env: JNIEnv,
     _class: JClass,
     files_dir: JString,
@@ -265,7 +270,7 @@ pub extern "C" fn Java_com_sgbusoready_CommuteNative_renderActive(
 
 /// `CommuteNative.nextAlarmEpochMillis(filesDir, epochSecs) -> long` (-1 = none)
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_com_sgbusoready_CommuteNative_nextAlarmEpochMillis(
+pub extern "C" fn Java_com_sgbuscommute_CommuteNative_nextAlarmEpochMillis(
     mut env: JNIEnv,
     _class: JClass,
     files_dir: JString,

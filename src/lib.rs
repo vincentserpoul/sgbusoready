@@ -148,7 +148,7 @@ fn dp_to_length(dp: i32) -> f32 {
     reason = "Android JNI export; the sole unsafe surface per the platform-bridge exception"
 )]
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_com_sgbusoready_CommuteNative_onTimePicked(
+pub extern "C" fn Java_com_sgbuscommute_CommuteNative_onTimePicked(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     tag: jni::objects::JString,
@@ -179,7 +179,7 @@ pub extern "C" fn Java_com_sgbusoready_CommuteNative_onTimePicked(
     reason = "Android JNI export; the sole unsafe surface per the platform-bridge exception"
 )]
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_com_sgbusoready_CommuteNative_onBackPressed(
+pub extern "C" fn Java_com_sgbuscommute_CommuteNative_onBackPressed(
     _env: jni::JNIEnv,
     _class: jni::objects::JClass,
 ) -> jni::sys::jboolean {
