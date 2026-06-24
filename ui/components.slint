@@ -253,52 +253,6 @@ export component FloatingAddButton inherits Rectangle {
     }
 }
 
-export component CommuteCard inherits Rectangle {
-    in property <string> label;
-    in property <string> status;
-    in property <bool> active;
-    callback clicked();
-    height: 112px;
-    border-radius: 18px;
-    background: root.active ? Palette.hero : Palette.surface;
-    border-width: 1px;
-    border-color: root.active ? #3A1E1E : Palette.hairline;
-    opacity: ta.pressed ? 0.9 : 1.0;
-    animate opacity { duration: 100ms; easing: ease-out; }
-    VerticalLayout {
-        padding: 14px;
-        spacing: 5px;
-        HorizontalLayout {
-            Text {
-                horizontal-stretch: 1;
-                text: root.label;
-                font-size: Type.body;
-                font-weight: 700;
-                color: Palette.text;
-                overflow: elide;
-            }
-            if root.active: Rectangle {
-                background: Palette.accent-solid;
-                border-radius: 11px;
-                HorizontalLayout {
-                    padding-left: 9px;
-                    padding-right: 9px;
-                    Text { vertical-alignment: center; text: "active now"; font-size: Type.label; font-weight: 600; color: Palette.on-accent; }
-                }
-            }
-        }
-        Text {
-            text: root.status;
-            font-size: Type.caption;
-            color: Palette.text-dim;
-            overflow: elide;
-        }
-    }
-    ta := TouchArea {
-        clicked => { root.clicked(); }
-    }
-}
-
 // A single stop's arrival timeline: bus pills above a baseline, a thin leader to
 // each arrival's exact minute, and the red minute below. All tags share one
 // scale (`scale-max` minutes across the lane width).
