@@ -89,6 +89,9 @@ class CommuteService : Service() {
 
     companion object {
         private const val REFRESH_MS = 15_000L
+
+        // @JvmStatic so the Rust JNI bridge can call it as a real static method.
+        @JvmStatic
         fun start(context: Context) {
             context.startForegroundService(Intent(context, CommuteService::class.java))
         }

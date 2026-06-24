@@ -50,6 +50,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use sgbr_core::bus_catalog::fetch::fetch_catalog;
 use sgbr_core::bus_catalog::model::BusCatalog;
@@ -60,7 +61,7 @@ use sgbr_core::commute::model::{Commute, TimeOfDay, Weekdays};
 use sgbr_core::commute::store::CommuteStore;
 use sgbr_core::lta::arrival::service_arrivals;
 use sgbr_core::lta::client::fetch_arrivals;
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use time::macros::offset;
 use time::{OffsetDateTime, Weekday};
 
@@ -433,6 +434,25 @@ fn rearm_alarms() {
     android_bridge::arm_alarms();
 }
 
+/// If a commute is active right now, start the foreground service immediately so
+/// its Live Update appears — the boundary alarm only fires at *future* window
+/// starts, so an already-active commute would otherwise show no notification.
+#[allow(
+    clippy::missing_const_for_fn,
+    reason = "non-const on Android, where it calls into the JNI bridge"
+)]
+fn maybe_start_service(store: &CommuteStore) {
+    #[cfg(target_os = "android")]
+    {
+        let now = now_sgt();
+        if !sgbr_core::commute::schedule::active_commutes_at(&store.commutes, now).is_empty() {
+            android_bridge::start_commute_service();
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = store;
+}
+
 fn handle_save(window: &AppWindow, store: &Store, catalog: &Catalog, path: &Path) {
     let line = window.get_form_line().to_string();
     let stop = window.get_form_stop_code().to_string();
@@ -460,6 +480,7 @@ fn handle_save(window: &AppWindow, store: &Store, catalog: &Catalog, path: &Path
         s.commutes.push(commute);
     }
     persist(&s, path);
+    maybe_start_service(&s);
     drop(s);
 
     with_catalog(catalog, |cat| {
@@ -489,6 +510,7 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
         populate_form(&window, None, -1, cat);
     });
     spawn_arrivals(&window, &store.borrow(), &catalog);
+    maybe_start_service(&store.borrow());
     window.set_catalog_loading(with_catalog(&catalog, |c| c.is_none()));
     spawn_refresh_if_stale(&catalog, &window, &store_path);
 
@@ -583,6 +605,19 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
             w.set_form_stop_name(SharedString::from(name));
             w.set_stop_services(with_catalog(&c, |cat| services_model(cat, &code)));
             w.set_form_line(SharedString::new());
+        }
+    });
+
+    // Refresh live arrivals on the list every 15s while a commute is active.
+    let arrivals_timer = Timer::default();
+    let w = window.as_weak();
+    let s = Rc::clone(&store);
+    let c = Arc::clone(&catalog);
+    arrivals_timer.start(TimerMode::Repeated, Duration::from_secs(15), move || {
+        if ON_LIST.load(Ordering::Relaxed)
+            && let Some(w) = w.upgrade()
+        {
+            spawn_arrivals(&w, &s.borrow(), &c);
         }
     });
 

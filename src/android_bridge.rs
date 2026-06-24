@@ -141,6 +141,36 @@ pub fn arm_alarms() {
     }
 }
 
+fn start_commute_service_inner() -> Result<(), JniError> {
+    let ctx = ndk_context::android_context();
+    // SAFETY: ndk-context holds the process JavaVM, valid for the process life.
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    // SAFETY: ndk-context holds a running Context jobject (the Application).
+    let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+    let service = load_app_class(&mut env, &context, "com.sgbusoready.CommuteService")?;
+    let call = env.call_static_method(
+        &service,
+        "start",
+        "(Landroid/content/Context;)V",
+        &[JValue::Object(&context)],
+    );
+    if call.is_err() {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+    }
+    call?;
+    Ok(())
+}
+
+/// Start the foreground service now (used when a commute is already active at
+/// save/launch, since the boundary alarm only fires at future window starts).
+pub fn start_commute_service() {
+    if let Err(e) = start_commute_service_inner() {
+        log::error!("jni: start service failed: {e:?}");
+    }
+}
+
 fn status_bar_top_dp_inner() -> Result<i32, JniError> {
     let ctx = ndk_context::android_context();
     // SAFETY: ndk-context holds the process JavaVM, valid for the process life.

@@ -15,7 +15,7 @@ export component AppBar inherits Rectangle {
     in property <string> action-text: "";
     callback back();
     callback action();
-    height: 56px;
+    height: 66px;
     HorizontalLayout {
         padding-left: 10px;
         padding-right: 16px;
@@ -62,7 +62,7 @@ export component PrimaryButton inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
     callback clicked();
-    height: 48px;
+    height: 58px;
     border-radius: 14px;
     background: Palette.accent;
     opacity: !root.enabled ? 0.4 : (ta.pressed ? 0.82 : 1.0);
@@ -81,7 +81,7 @@ export component PrimaryButton inherits Rectangle {
 export component GhostButton inherits Rectangle {
     in property <string> text;
     callback clicked();
-    height: 48px;
+    height: 58px;
     border-radius: 14px;
     background: Palette.surface;
     border-width: 1px;
@@ -103,8 +103,8 @@ export component Chip inherits Rectangle {
     in property <string> text;
     in property <bool> selected;
     callback toggled();
-    height: 34px;
-    border-radius: 17px;
+    height: 44px;
+    border-radius: 22px;
     background: root.selected ? Palette.accent-solid : Palette.chip-muted-bg;
     opacity: ta.pressed ? 0.78 : 1.0;
     animate opacity { duration: 90ms; easing: ease-out; }
@@ -129,9 +129,9 @@ export component DayToggle inherits Rectangle {
     in property <string> label;
     in property <bool> on;
     callback toggled();
-    width: 34px;
-    height: 34px;
-    border-radius: 17px;
+    width: 46px;
+    height: 46px;
+    border-radius: 23px;
     background: root.on ? Palette.accent-solid : Palette.chip-muted-bg;
     opacity: ta.pressed ? 0.7 : 1.0;
     animate opacity { duration: 90ms; easing: ease-out; }
@@ -154,7 +154,7 @@ export component TextField inherits Rectangle {
     public function defocus() {
         ti.clear-focus();
     }
-    height: 46px;
+    height: 56px;
     border-radius: 12px;
     background: Palette.surface;
     border-width: 1px;
@@ -189,7 +189,7 @@ export component TimeStepper inherits Rectangle {
     in property <int> hour;
     in property <int> minute;
     callback picked();
-    height: 88px;
+    height: 100px;
     border-radius: 12px;
     background: Palette.surface;
     border-width: 1px;
@@ -207,7 +207,7 @@ export component TimeStepper inherits Rectangle {
         }
         Text {
             text: (root.hour < 10 ? "0\{root.hour}" : "\{root.hour}") + ":" + (root.minute < 10 ? "0\{root.minute}" : "\{root.minute}");
-            font-size: 32px;
+            font-size: 38px;
             font-weight: 700;
             color: Palette.text;
             horizontal-alignment: center;
@@ -220,9 +220,9 @@ export component TimeStepper inherits Rectangle {
 
 export component FloatingAddButton inherits Rectangle {
     callback clicked();
-    width: 56px;
-    height: 56px;
-    border-radius: 28px;
+    width: 66px;
+    height: 66px;
+    border-radius: 33px;
     background: Palette.accent;
     drop-shadow-blur: 18px;
     drop-shadow-color: #00000077;
@@ -231,7 +231,7 @@ export component FloatingAddButton inherits Rectangle {
     animate opacity { duration: 100ms; easing: ease-out; }
     Text {
         text: "+";
-        font-size: 30px;
+        font-size: 38px;
         color: Palette.on-accent;
     }
     ta := TouchArea {
@@ -244,7 +244,7 @@ export component CommuteCard inherits Rectangle {
     in property <string> status;
     in property <bool> active;
     callback clicked();
-    height: 96px;
+    height: 112px;
     border-radius: 18px;
     background: root.active ? Palette.hero : Palette.surface;
     border-width: 1px;
@@ -289,7 +289,7 @@ export component StopResultRow inherits Rectangle {
     in property <string> name;
     in property <string> sub;
     callback clicked();
-    height: 58px;
+    height: 70px;
     background: ta.pressed ? Palette.surface : transparent;
     border-radius: 12px;
     animate background { duration: 80ms; }
