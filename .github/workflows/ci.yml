@@ -31,6 +31,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install Linux UI deps (fontconfig for the Slint desktop build)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
+
       - name: Install Rust
         run: |
           rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" \
@@ -51,6 +55,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
+
+      - name: Install Linux UI deps (fontconfig for the Slint desktop build)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
 
       - name: Install Rust
         run: |
@@ -83,6 +91,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
+
+      - name: Install Linux UI deps (fontconfig for the Slint desktop build)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
 
       - name: Install Rust
         run: |
@@ -125,6 +137,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install Linux UI deps (fontconfig for the Slint desktop build)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
+
       - name: Install Rust
         run: |
           rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" --profile minimal
@@ -149,6 +165,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
+
+      - name: Install Linux UI deps (fontconfig for the Slint desktop build)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
 
       - name: Install Rust
         run: |
@@ -196,6 +216,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
+
+      - name: Install Linux UI deps (fontconfig for the Slint desktop build)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
 
       - name: Install Rust
         run: |

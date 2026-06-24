@@ -8,9 +8,13 @@
 version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-# Add specific RUSTSEC ignores here only with a justification comment, once the
-# real dependency tree (Slint, http client, etc.) is in place.
-ignore = []
+# Add specific RUSTSEC ignores here only with a justification comment.
+ignore = [
+  # `paste` is archived/unmaintained (no fix available). It's a transitive
+  # build-time proc-macro dep pulled in via Slint; no known vulnerability,
+  # only the unmaintained advisory. Revisit if Slint drops it.
+  "RUSTSEC-2024-0436",
+]
 
 # ============================================================================
 # LICENSES — dependency licenses checked against an allowlist
@@ -31,8 +35,15 @@ allow = [
   "CC0-1.0",
   "BSL-1.0",
   "CDLA-Permissive-2.0",
+  "Unlicense",
+  # Slint is used under its Royalty-Free license (free, incl. proprietary use).
+  # The crates are tri-licensed GPL-3.0 / Royalty-Free / paid Software; we elect
+  # the Royalty-Free option. Confirm this matches your distribution intent.
+  "LicenseRef-Slint-Royalty-free-2.0",
 ]
 confidence-threshold = 0.8
+# Our own workspace crates carry no `license` field; don't flag them.
+private = { ignore = true }
 
 # Ring uses a custom license that's permissive (likely pulled in via rustls).
 [[licenses.clarify]]
