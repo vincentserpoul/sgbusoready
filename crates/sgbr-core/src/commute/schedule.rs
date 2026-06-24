@@ -19,6 +19,44 @@ pub fn next_alarm_at(commutes: &[Commute], now: OffsetDateTime) -> Option<Offset
     commutes.iter().filter_map(|c| c.next_boundary(now)).min()
 }
 
+/// A stop to refresh while active, with the union of buses tracked there by
+/// every currently-active commute.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopPlan {
+    /// LTA bus stop code.
+    pub code: String,
+    /// Cached display name (from the first commute that referenced this stop).
+    pub name: String,
+    /// Union of tracked buses across active commutes, deduped, first-seen order.
+    pub buses: Vec<String>,
+}
+
+/// The distinct stops across all commutes active at `now`, each carrying the
+/// union of buses tracked there. One LTA arrival call per returned stop covers
+/// every active commute. Empty when nothing is active.
+#[must_use]
+pub fn active_stop_plans(commutes: &[Commute], now: OffsetDateTime) -> Vec<StopPlan> {
+    let mut plans: Vec<StopPlan> = Vec::new();
+    for commute in commutes.iter().filter(|c| c.is_active_at(now)) {
+        for stop in &commute.stops {
+            if let Some(existing) = plans.iter_mut().find(|p| p.code == stop.code) {
+                for bus in &stop.buses {
+                    if !existing.buses.contains(bus) {
+                        existing.buses.push(bus.clone());
+                    }
+                }
+            } else {
+                plans.push(StopPlan {
+                    code: stop.code.clone(),
+                    name: stop.name.clone(),
+                    buses: stop.buses.clone(),
+                });
+            }
+        }
+    }
+    plans
+}
+
 #[cfg(test)]
 mod tests {
     use super::{active_commutes_at, next_alarm_at};
@@ -106,6 +144,72 @@ mod tests {
         assert_eq!(
             next_alarm_at(&list, datetime!(2026-06-22 08:30:00 +8)),
             None
+        );
+    }
+
+    fn two_stop_morning() -> Commute {
+        Commute::new(
+            None,
+            Weekdays::from_days(&[Monday]),
+            TimeOfDay { hour: 8, minute: 0 },
+            TimeOfDay { hour: 9, minute: 0 },
+            vec![
+                CommuteStop {
+                    code: "83139".to_owned(),
+                    name: "Opp Blk 123".to_owned(),
+                    buses: vec!["14".to_owned(), "14e".to_owned()],
+                },
+                CommuteStop {
+                    code: "17009".to_owned(),
+                    name: "Bef Clementi Stn".to_owned(),
+                    buses: vec!["96".to_owned()],
+                },
+            ],
+        )
+        .expect("valid commute")
+    }
+
+    #[test]
+    fn active_stop_plans_lists_distinct_stops_when_active() {
+        let list = vec![two_stop_morning()];
+        let plans = super::active_stop_plans(&list, datetime!(2026-06-22 08:30:00 +8));
+        assert_eq!(plans.len(), 2);
+        assert_eq!(plans[0].code, "83139");
+        assert_eq!(plans[0].buses, vec!["14".to_owned(), "14e".to_owned()]);
+        assert_eq!(plans[1].code, "17009");
+    }
+
+    #[test]
+    fn active_stop_plans_empty_when_inactive() {
+        let list = vec![two_stop_morning()];
+        let plans = super::active_stop_plans(&list, datetime!(2026-06-22 12:00:00 +8));
+        assert!(plans.is_empty());
+    }
+
+    #[test]
+    fn active_stop_plans_unions_buses_across_commutes_for_same_stop() {
+        // Two commutes both active Monday 08:30, both tracking stop 83139 with
+        // overlapping + distinct buses -> union, deduped, first-seen order.
+        let a = two_stop_morning(); // 83139: 14, 14e ; 17009: 96
+        let b = Commute::new(
+            None,
+            Weekdays::from_days(&[Monday]),
+            TimeOfDay { hour: 8, minute: 0 },
+            TimeOfDay { hour: 9, minute: 0 },
+            vec![CommuteStop {
+                code: "83139".to_owned(),
+                name: "Opp Blk 123".to_owned(),
+                buses: vec!["14".to_owned(), "154".to_owned()],
+            }],
+        )
+        .expect("valid commute");
+        let list = vec![a, b];
+        let plans = super::active_stop_plans(&list, datetime!(2026-06-22 08:30:00 +8));
+        assert_eq!(plans.len(), 2);
+        assert_eq!(plans[0].code, "83139");
+        assert_eq!(
+            plans[0].buses,
+            vec!["14".to_owned(), "14e".to_owned(), "154".to_owned()]
         );
     }
 }
