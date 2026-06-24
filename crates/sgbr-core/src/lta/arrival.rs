@@ -173,9 +173,23 @@ pub fn stop_arrivals(
     }
 }
 
+/// The shared timeline axis maximum, in minutes: the largest upcoming arrival
+/// across all `stops`, floored at 15 so the scale never shrinks below a quarter
+/// hour. Always at least 15.
+#[must_use]
+pub fn timeline_scale_max(stops: &[StopArrivals]) -> i64 {
+    let largest = stops
+        .iter()
+        .flat_map(|s| s.items.iter())
+        .map(|i| i.minutes)
+        .max()
+        .unwrap_or(0);
+    largest.max(15)
+}
+
 #[cfg(test)]
 mod stop_arrivals_tests {
-    use super::{ArrivalItem, stop_arrivals};
+    use super::{ArrivalItem, StopArrivals, stop_arrivals, timeline_scale_max};
     use crate::lta::model::BusArrivalResponse;
     use time::macros::datetime;
 
@@ -262,6 +276,47 @@ mod stop_arrivals_tests {
         let tracked = vec!["77".to_owned()];
         let out = stop_arrivals("83139", "Opp Blk 123", &tracked, &resp, now);
         assert!(out.items.is_empty());
+    }
+
+    #[test]
+    fn scale_max_floors_at_15() {
+        let stops = vec![StopArrivals {
+            code: "1".to_owned(),
+            name: "A".to_owned(),
+            items: vec![ArrivalItem {
+                minutes: 3,
+                buses: vec!["14".to_owned()],
+            }],
+        }];
+        assert_eq!(timeline_scale_max(&stops), 15);
+    }
+
+    #[test]
+    fn scale_max_uses_largest_minute_when_above_15() {
+        let stops = vec![
+            StopArrivals {
+                code: "1".to_owned(),
+                name: "A".to_owned(),
+                items: vec![ArrivalItem {
+                    minutes: 3,
+                    buses: vec!["14".to_owned()],
+                }],
+            },
+            StopArrivals {
+                code: "2".to_owned(),
+                name: "B".to_owned(),
+                items: vec![ArrivalItem {
+                    minutes: 18,
+                    buses: vec!["96".to_owned()],
+                }],
+            },
+        ];
+        assert_eq!(timeline_scale_max(&stops), 18);
+    }
+
+    #[test]
+    fn scale_max_is_15_for_empty() {
+        assert_eq!(timeline_scale_max(&[]), 15);
     }
 }
 
