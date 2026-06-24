@@ -1,5 +1,7 @@
 //! Convert raw `EstimatedArrival` strings into whole-minute countdowns.
 
+use std::collections::BTreeMap;
+
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -105,6 +107,161 @@ mod tests {
         let now = datetime!(2026-06-21 08:20:00 +8);
         let mins = minutes_until("2026-06-21T08:18:00+08:00", now).expect("valid past arrival");
         assert_eq!(mins, -2);
+    }
+}
+
+/// One bus-stop's upcoming arrivals, soonest-first, with buses arriving at the
+/// same whole minute grouped together. Drives both the in-app per-stop timeline
+/// and the Live Update notification line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopArrivals {
+    /// LTA bus stop code.
+    pub code: String,
+    /// Cached display name.
+    pub name: String,
+    /// Arrival groups, ascending by minute.
+    pub items: Vec<ArrivalItem>,
+}
+
+/// One arrival group: every tracked bus arriving at the same whole minute.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArrivalItem {
+    /// Whole-minute countdown (0 = due). Never negative.
+    pub minutes: i64,
+    /// Service numbers arriving at this minute, in response order, deduped.
+    pub buses: Vec<String>,
+}
+
+/// Build a [`StopArrivals`] for `code`/`name` from `response`, keeping only the
+/// services in `tracked`, dropping past (negative-minute) arrivals, and grouping
+/// same-minute buses. Items are sorted ascending by minute.
+#[must_use]
+pub fn stop_arrivals(
+    code: &str,
+    name: &str,
+    tracked: &[String],
+    response: &BusArrivalResponse,
+    now: OffsetDateTime,
+) -> StopArrivals {
+    let mut by_minute: BTreeMap<i64, Vec<String>> = BTreeMap::new();
+    for svc in &response.services {
+        if !tracked.iter().any(|t| t == &svc.service_no) {
+            continue;
+        }
+        let slots = [&svc.next_bus, &svc.next_bus2, &svc.next_bus3];
+        for bus in slots {
+            let Ok(minutes) = minutes_until(&bus.estimated_arrival, now) else {
+                continue;
+            };
+            if minutes < 0 {
+                continue;
+            }
+            let entry = by_minute.entry(minutes).or_default();
+            if !entry.contains(&svc.service_no) {
+                entry.push(svc.service_no.clone());
+            }
+        }
+    }
+    let items = by_minute
+        .into_iter()
+        .map(|(minutes, buses)| ArrivalItem { minutes, buses })
+        .collect();
+    StopArrivals {
+        code: code.to_owned(),
+        name: name.to_owned(),
+        items,
+    }
+}
+
+#[cfg(test)]
+mod stop_arrivals_tests {
+    use super::{ArrivalItem, stop_arrivals};
+    use crate::lta::model::BusArrivalResponse;
+    use time::macros::datetime;
+
+    // Stop 83139 with services 14 (8m, 25m), 14e (8m), and 999 (untracked).
+    const SAMPLE: &str = r#"{
+      "BusStopCode": "83139",
+      "Services": [
+        {
+          "ServiceNo": "14",
+          "NextBus":  { "EstimatedArrival": "2026-06-21T08:18:00+08:00" },
+          "NextBus2": { "EstimatedArrival": "2026-06-21T08:35:00+08:00" },
+          "NextBus3": { "EstimatedArrival": "" }
+        },
+        {
+          "ServiceNo": "14e",
+          "NextBus":  { "EstimatedArrival": "2026-06-21T08:18:00+08:00" },
+          "NextBus2": { "EstimatedArrival": "" },
+          "NextBus3": { "EstimatedArrival": "" }
+        },
+        {
+          "ServiceNo": "999",
+          "NextBus":  { "EstimatedArrival": "2026-06-21T08:12:00+08:00" },
+          "NextBus2": { "EstimatedArrival": "" },
+          "NextBus3": { "EstimatedArrival": "" }
+        }
+      ]
+    }"#;
+
+    #[test]
+    fn filters_to_tracked_buses_and_groups_same_minute() {
+        let resp: BusArrivalResponse = serde_json::from_str(SAMPLE).expect("parse");
+        let now = datetime!(2026-06-21 08:10:00 +8);
+        let tracked = vec!["14".to_owned(), "14e".to_owned()];
+        let out = stop_arrivals("83139", "Opp Blk 123", &tracked, &resp, now);
+        assert_eq!(out.code, "83139");
+        assert_eq!(out.name, "Opp Blk 123");
+        // 999 excluded (untracked). 14 & 14e share minute 8; 14 also at 25.
+        assert_eq!(
+            out.items,
+            vec![
+                ArrivalItem {
+                    minutes: 8,
+                    buses: vec!["14".to_owned(), "14e".to_owned()],
+                },
+                ArrivalItem {
+                    minutes: 25,
+                    buses: vec!["14".to_owned()],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn drops_past_arrivals() {
+        const PAST: &str = r#"{
+          "BusStopCode": "83139",
+          "Services": [
+            {
+              "ServiceNo": "14",
+              "NextBus":  { "EstimatedArrival": "2026-06-21T08:05:00+08:00" },
+              "NextBus2": { "EstimatedArrival": "2026-06-21T08:18:00+08:00" },
+              "NextBus3": { "EstimatedArrival": "" }
+            }
+          ]
+        }"#;
+        let resp: BusArrivalResponse = serde_json::from_str(PAST).expect("parse");
+        let now = datetime!(2026-06-21 08:10:00 +8);
+        let tracked = vec!["14".to_owned()];
+        let out = stop_arrivals("83139", "Opp Blk 123", &tracked, &resp, now);
+        // 08:05 is in the past (-5m) -> dropped; only 08:18 (8m) kept.
+        assert_eq!(
+            out.items,
+            vec![ArrivalItem {
+                minutes: 8,
+                buses: vec!["14".to_owned()],
+            }]
+        );
+    }
+
+    #[test]
+    fn empty_when_no_tracked_buses_present() {
+        let resp: BusArrivalResponse = serde_json::from_str(SAMPLE).expect("parse");
+        let now = datetime!(2026-06-21 08:10:00 +8);
+        let tracked = vec!["77".to_owned()];
+        let out = stop_arrivals("83139", "Opp Blk 123", &tracked, &resp, now);
+        assert!(out.items.is_empty());
     }
 }
 
