@@ -1,4 +1,4 @@
-package com.sgbusoready
+package com.sgbuscommute
 
 import android.app.NotificationChannel
 import android.app.NotificationManager

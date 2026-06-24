@@ -1,4 +1,4 @@
-package com.sgbusoready
+package com.sgbuscommute
 
 import android.app.Activity
 import android.app.TimePickerDialog

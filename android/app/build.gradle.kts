@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.sgbusoready"
+    namespace = "com.sgbuscommute"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.sgbusoready"
+        applicationId = "com.sgbuscommute"
         minSdk = 24
         targetSdk = 36
         versionCode = 1

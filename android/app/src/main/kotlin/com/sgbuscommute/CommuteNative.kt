@@ -1,4 +1,4 @@
-package com.sgbusoready
+package com.sgbuscommute
 
 /** JNI surface implemented in Rust (libsgbusoready). */
 object CommuteNative {

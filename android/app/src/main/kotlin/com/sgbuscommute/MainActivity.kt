@@ -1,4 +1,4 @@
-package com.sgbusoready
+package com.sgbuscommute
 
 import android.Manifest
 import android.app.NativeActivity

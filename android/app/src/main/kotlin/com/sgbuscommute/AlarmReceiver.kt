@@ -1,4 +1,4 @@
-package com.sgbusoready
+package com.sgbuscommute
 
 import android.content.BroadcastReceiver
 import android.content.Context
