@@ -40,7 +40,7 @@ mod generated {
     slint::include_modules!();
 }
 
-use generated::{AppWindow, CommuteRow, Screen, StopResult};
+use generated::{AppWindow, ArrivalTag, CommuteRow, EditStop, Screen, StopLane, StopResult};
 
 #[cfg(target_os = "android")]
 mod android_bridge;
@@ -57,9 +57,9 @@ use sgbr_core::bus_catalog::model::BusCatalog;
 use sgbr_core::bus_catalog::search::search as catalog_search;
 use sgbr_core::bus_catalog::store as catalog_store;
 use sgbr_core::commute::display::format_see_you_soon;
-use sgbr_core::commute::model::{Commute, TimeOfDay, Weekdays};
+use sgbr_core::commute::model::{Commute, CommuteStop, TimeOfDay, Weekdays};
 use sgbr_core::commute::store::CommuteStore;
-use sgbr_core::lta::arrival::service_arrivals;
+use sgbr_core::lta::arrival::{StopArrivals, stop_arrivals, timeline_scale_max};
 use sgbr_core::lta::client::fetch_arrivals;
 use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use time::macros::offset;
@@ -68,6 +68,39 @@ use time::{OffsetDateTime, Weekday};
 /// Catalog is shared with a background refresh thread, so it's `Arc<Mutex>`.
 type Catalog = Arc<Mutex<Option<BusCatalog>>>;
 type Store = Rc<RefCell<CommuteStore>>;
+
+/// One stop being edited: its code/name, the full service list at that stop, and
+/// which services are currently selected (parallel to `services`).
+#[derive(Clone)]
+struct EditStopState {
+    code: String,
+    name: String,
+    services: Vec<String>,
+    selected: Vec<bool>,
+}
+
+/// The editor's working list of stops, owned by Rust and rebuilt into the Slint
+/// `form-stops` model on every mutation.
+type FormStops = Rc<RefCell<Vec<EditStopState>>>;
+
+/// Push the Rust editor stop-state into the Slint `form-stops` model.
+fn push_form_stops(window: &AppWindow, stops: &[EditStopState]) {
+    let model: Vec<EditStop> = stops
+        .iter()
+        .map(|s| EditStop {
+            code: SharedString::from(s.code.as_str()),
+            name: SharedString::from(s.name.as_str()),
+            services: ModelRc::new(VecModel::from(
+                s.services
+                    .iter()
+                    .map(SharedString::from)
+                    .collect::<Vec<_>>(),
+            )),
+            selected: ModelRc::new(VecModel::from(s.selected.clone())),
+        })
+        .collect();
+    window.set_form_stops(ModelRc::new(VecModel::from(model)));
+}
 
 /// LTA `DataMall` `AccountKey`, injected at build time (empty if unset → no refresh).
 const ACCOUNT_KEY: &str = match option_env!("LTA_API_ACCOUNT_KEY") {
@@ -206,7 +239,6 @@ fn spawn_refresh_if_stale(catalog: &Catalog, window: &AppWindow, store_path: &Pa
     let catalog = Arc::clone(catalog);
     let weak = window.as_weak();
     let cat_path = catalog_path(store_path);
-    let commutes_path = store_path.to_path_buf();
     std::thread::spawn(move || {
         let Ok(fresh) = fetch_catalog(ACCOUNT_KEY, OffsetDateTime::now_utc()) else {
             return;
@@ -217,11 +249,8 @@ fn spawn_refresh_if_stale(catalog: &Catalog, window: &AppWindow, store_path: &Pa
         }
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = weak.upgrade() {
-                // The store is persisted on every change, so disk == memory; load
-                // it to relabel rows with stop names now the catalog is available.
-                let store = CommuteStore::load(&commutes_path).unwrap_or_default();
-                with_catalog(&catalog, |cat| rebuild_rows(&w, &store, cat));
-                spawn_arrivals(&w, &store, &catalog);
+                // Rows label from cached stop names, so they need no relabel; just
+                // refresh the stop-search now the catalog is available.
                 refresh_search(&w, &catalog);
             }
         });
@@ -232,13 +261,9 @@ fn catalog_path(store_path: &Path) -> PathBuf {
     store_path.with_file_name("bus_catalog.json")
 }
 
-/// Resolve a commute's stop code to a display name via the catalog (falls back
-/// to the bare code) and build the card label.
-fn card_label(catalog: Option<&BusCatalog>, commute: &Commute) -> String {
-    let name = catalog
-        .and_then(|c| c.stop(&commute.stop))
-        .map_or_else(|| commute.stop.clone(), |s| s.name.clone());
-    format!("Bus {} · {name}", commute.line)
+/// Card label: the commute's own label, or its first stop's name (+N).
+fn card_label(commute: &Commute) -> String {
+    commute.display_label()
 }
 
 fn see_you_soon(commute: &Commute, now: OffsetDateTime) -> String {
@@ -248,57 +273,116 @@ fn see_you_soon(commute: &Commute, now: OffsetDateTime) -> String {
         .unwrap_or_default()
 }
 
-/// Synchronous (no network) status used when first building rows; a background
-/// fetch later replaces an active row with live arrivals (see `spawn_arrivals`).
-fn card_status(commute: &Commute, now: OffsetDateTime) -> String {
-    if commute.is_active_at(now) {
-        "active now".to_owned()
-    } else {
-        see_you_soon(commute, now)
-    }
+/// Off-window summary line, e.g. "see you soon · next Mon 08:00 · 2 stops · 4 buses".
+fn inactive_summary(commute: &Commute, now: OffsetDateTime) -> String {
+    let stops = commute.stops.len();
+    let buses: usize = commute.stops.iter().map(|s| s.buses.len()).sum();
+    let see = see_you_soon(commute, now);
+    format!("{see} · {stops} stops · {buses} buses")
 }
 
-/// Live arrival minutes for `commute`'s line at its stop (blocking — off-UI only).
-fn active_minutes(commute: &Commute, now: OffsetDateTime) -> Vec<i64> {
-    match fetch_arrivals(ACCOUNT_KEY, &commute.stop) {
-        Ok(resp) => service_arrivals(&resp, now)
-            .into_iter()
-            .find(|s| s.service_no == commute.line)
-            .map(|s| s.minutes)
-            .unwrap_or_default(),
-        Err(_) => Vec::new(),
-    }
+fn empty_lanes() -> ModelRc<StopLane> {
+    ModelRc::new(VecModel::from(Vec::<StopLane>::new()))
 }
 
-fn minutes_status(mins: &[i64]) -> String {
-    if mins.is_empty() {
-        "no buses".to_owned()
-    } else {
-        mins.iter()
-            .map(|m| if *m <= 0 { "due".to_owned() } else { format!("{m} min") })
-            .collect::<Vec<_>>()
-            .join(" · ")
-    }
+/// Skeleton lanes for an active commute: one lane per stop with its name but no
+/// arrival tags yet, so the timeline structure shows immediately while the live
+/// fetch (`spawn_arrivals`) is in flight.
+fn skeleton_lanes(commute: &Commute) -> ModelRc<StopLane> {
+    let stops: Vec<StopArrivals> = commute
+        .stops
+        .iter()
+        .map(|s| StopArrivals {
+            code: s.code.clone(),
+            name: s.name.clone(),
+            items: Vec::new(),
+        })
+        .collect();
+    lanes_model(&stops)
 }
 
-fn rebuild_rows(window: &AppWindow, store: &CommuteStore, catalog: Option<&BusCatalog>) {
+/// Build all list rows synchronously (no network): active rows get skeleton lanes
+/// until `spawn_arrivals` fills in live tags; inactive rows get the summary line.
+fn rebuild_rows(window: &AppWindow, store: &CommuteStore) {
     let now = now_sgt();
     let mut rows: Vec<CommuteRow> = Vec::new();
     for (i, c) in store.commutes.iter().enumerate() {
+        let active = c.is_active_at(now);
         rows.push(CommuteRow {
-            label: SharedString::from(card_label(catalog, c)),
-            status: SharedString::from(card_status(c, now)),
-            active: c.is_active_at(now),
+            label: SharedString::from(card_label(c)),
+            status: SharedString::from(if active {
+                String::new()
+            } else {
+                inactive_summary(c, now)
+            }),
+            active,
             index: i32::try_from(i).unwrap_or(-1),
+            lanes: if active {
+                skeleton_lanes(c)
+            } else {
+                empty_lanes()
+            },
+            scale_max: 15,
         });
     }
     window.set_rows(ModelRc::new(VecModel::from(rows)));
 }
 
+/// Plain, `Send` row data computed off the UI thread; converted to the Slint
+/// `CommuteRow` (which holds non-`Send` `ModelRc`s) back on the UI thread.
+struct RowData {
+    label: String,
+    status: String,
+    active: bool,
+    index: i32,
+    stops: Vec<StopArrivals>,
+    scale: i32,
+}
+
+/// Fetch each stop's arrivals for one active commute (blocking; off-UI only) and
+/// the shared timeline scale. One `fetch_arrivals` per stop, filtered to buses.
+fn commute_stop_arrivals(commute: &Commute, now: OffsetDateTime) -> (Vec<StopArrivals>, i32) {
+    let mut all: Vec<StopArrivals> = Vec::new();
+    for stop in &commute.stops {
+        let arrivals = match fetch_arrivals(ACCOUNT_KEY, &stop.code) {
+            Ok(resp) => stop_arrivals(&stop.code, &stop.name, &stop.buses, &resp, now),
+            Err(_) => StopArrivals {
+                code: stop.code.clone(),
+                name: stop.name.clone(),
+                items: Vec::new(),
+            },
+        };
+        all.push(arrivals);
+    }
+    let scale = i32::try_from(timeline_scale_max(&all)).unwrap_or(15);
+    (all, scale)
+}
+
+/// Build the Slint timeline lanes for a commute's stops (UI thread — makes `ModelRc`s).
+fn lanes_model(stops: &[StopArrivals]) -> ModelRc<StopLane> {
+    let lanes: Vec<StopLane> = stops
+        .iter()
+        .map(|sa| StopLane {
+            name: SharedString::from(sa.name.as_str()),
+            code: SharedString::from(sa.code.as_str()),
+            tags: ModelRc::new(VecModel::from(
+                sa.items
+                    .iter()
+                    .map(|it| ArrivalTag {
+                        buses: SharedString::from(it.buses.join("·")),
+                        minutes: i32::try_from(it.minutes).unwrap_or(0),
+                    })
+                    .collect::<Vec<_>>(),
+            )),
+        })
+        .collect();
+    ModelRc::new(VecModel::from(lanes))
+}
+
 /// For each active commute, fetch live arrivals on a background thread and
-/// replace the list rows with the live timings (no-op without a key / when none
-/// are active). Inactive rows keep their "see you soon" status.
-fn spawn_arrivals(window: &AppWindow, store: &CommuteStore, catalog: &Catalog) {
+/// replace the list rows with timeline lanes (no-op without a key / when none
+/// are active). Inactive rows keep their summary line.
+fn spawn_arrivals(window: &AppWindow, store: &CommuteStore) {
     if ACCOUNT_KEY.is_empty() {
         return;
     }
@@ -307,28 +391,43 @@ fn spawn_arrivals(window: &AppWindow, store: &CommuteStore, catalog: &Catalog) {
         return;
     }
     let commutes = store.commutes.clone();
-    let catalog = Arc::clone(catalog);
     let weak = window.as_weak();
     std::thread::spawn(move || {
         let now = now_sgt();
-        let mut rows: Vec<CommuteRow> = Vec::new();
+        let mut data: Vec<RowData> = Vec::new();
         for (i, c) in commutes.iter().enumerate() {
-            let label = with_catalog(&catalog, |cat| card_label(cat, c));
             let active = c.is_active_at(now);
-            let status = if active {
-                minutes_status(&active_minutes(c, now))
+            let (stops, scale) = if active {
+                commute_stop_arrivals(c, now)
             } else {
-                see_you_soon(c, now)
+                (Vec::new(), 15)
             };
-            rows.push(CommuteRow {
-                label: SharedString::from(label),
-                status: SharedString::from(status),
+            data.push(RowData {
+                label: card_label(c),
+                status: if active {
+                    String::new()
+                } else {
+                    inactive_summary(c, now)
+                },
                 active,
                 index: i32::try_from(i).unwrap_or(-1),
+                stops,
+                scale,
             });
         }
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = weak.upgrade() {
+                let rows: Vec<CommuteRow> = data
+                    .into_iter()
+                    .map(|d| CommuteRow {
+                        label: SharedString::from(d.label),
+                        status: SharedString::from(d.status),
+                        active: d.active,
+                        index: d.index,
+                        lanes: lanes_model(&d.stops),
+                        scale_max: d.scale,
+                    })
+                    .collect();
                 w.set_rows(ModelRc::new(VecModel::from(rows)));
             }
         });
@@ -378,39 +477,56 @@ fn set_days(window: &AppWindow, days: Weekdays) {
     window.set_day_sun(days.contains(Weekday::Sunday));
 }
 
-fn services_model(catalog: Option<&BusCatalog>, code: &str) -> ModelRc<SharedString> {
-    let services: Vec<SharedString> = catalog
-        .map(|c| c.services(code).iter().map(SharedString::from).collect())
-        .unwrap_or_default();
-    ModelRc::new(VecModel::from(services))
+/// The services at `code` from the catalog (empty when unavailable).
+fn stop_services(catalog: Option<&BusCatalog>, code: &str) -> Vec<String> {
+    catalog
+        .map(|c| c.services(code).iter().map(ToString::to_string).collect())
+        .unwrap_or_default()
 }
 
 /// Populate the editor form from an existing commute (edit) or reset it (new).
-fn populate_form(window: &AppWindow, commute: Option<&Commute>, index: i32, catalog: Option<&BusCatalog>) {
+/// `form_stops` is the Rust-owned working stop list, kept in sync with the UI.
+fn populate_form(
+    window: &AppWindow,
+    commute: Option<&Commute>,
+    index: i32,
+    catalog: Option<&BusCatalog>,
+    form_stops: &FormStops,
+) {
+    let mut stops: Vec<EditStopState> = Vec::new();
     if let Some(c) = commute {
-        window.set_form_line(SharedString::from(c.line.as_str()));
-        window.set_form_stop_code(SharedString::from(c.stop.as_str()));
-        let name = catalog
-            .and_then(|k| k.stop(&c.stop))
-            .map_or_else(String::new, |s| s.name.clone());
-        window.set_form_stop_name(SharedString::from(name));
-        window.set_stop_services(services_model(catalog, &c.stop));
+        window.set_form_label(SharedString::from(c.label.clone().unwrap_or_default()));
         set_days(window, c.days);
         window.set_start_hour(i32::from(c.start.hour));
         window.set_start_minute(i32::from(c.start.minute));
         window.set_end_hour(i32::from(c.end.hour));
         window.set_end_minute(i32::from(c.end.minute));
+        for st in &c.stops {
+            let mut services = stop_services(catalog, &st.code);
+            // Keep tracked buses visible even if the catalog lacks them.
+            for b in &st.buses {
+                if !services.iter().any(|s| s == b) {
+                    services.push(b.clone());
+                }
+            }
+            let selected = services.iter().map(|s| st.buses.contains(s)).collect();
+            stops.push(EditStopState {
+                code: st.code.clone(),
+                name: st.name.clone(),
+                services,
+                selected,
+            });
+        }
     } else {
-        window.set_form_line(SharedString::new());
-        window.set_form_stop_code(SharedString::new());
-        window.set_form_stop_name(SharedString::new());
-        window.set_stop_services(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+        window.set_form_label(SharedString::new());
         set_days(window, Weekdays(0));
         window.set_start_hour(8);
         window.set_start_minute(0);
         window.set_end_hour(9);
         window.set_end_minute(0);
     }
+    form_stops.borrow_mut().clone_from(&stops);
+    push_form_stops(window, &stops);
     window.set_editing_index(index);
     window.set_error_text(SharedString::new());
 }
@@ -453,14 +569,34 @@ fn maybe_start_service(store: &CommuteStore) {
     let _ = store;
 }
 
-fn handle_save(window: &AppWindow, store: &Store, catalog: &Catalog, path: &Path) {
-    let line = window.get_form_line().to_string();
-    let stop = window.get_form_stop_code().to_string();
+fn handle_save(window: &AppWindow, store: &Store, path: &Path, form_stops: &FormStops) {
+    let label = window.get_form_label().to_string();
+    let label = if label.trim().is_empty() {
+        None
+    } else {
+        Some(label)
+    };
     let days = read_weekdays(window);
     let start = time_of_day(window.get_start_hour(), window.get_start_minute());
     let end = time_of_day(window.get_end_hour(), window.get_end_minute());
 
-    let commute = match Commute::new(&line, &stop, days, start, end, None) {
+    let stops: Vec<CommuteStop> = form_stops
+        .borrow()
+        .iter()
+        .map(|s| CommuteStop {
+            code: s.code.clone(),
+            name: s.name.clone(),
+            buses: s
+                .services
+                .iter()
+                .zip(s.selected.iter())
+                .filter(|(_, on)| **on)
+                .map(|(svc, _)| svc.clone())
+                .collect(),
+        })
+        .collect();
+
+    let commute = match Commute::new(label, days, start, end, stops) {
         Ok(c) => c,
         Err(e) => {
             window.set_error_text(SharedString::from(e.to_string()));
@@ -483,11 +619,9 @@ fn handle_save(window: &AppWindow, store: &Store, catalog: &Catalog, path: &Path
     maybe_start_service(&s);
     drop(s);
 
-    with_catalog(catalog, |cat| {
-        populate_form(window, None, -1, cat);
-        rebuild_rows(window, &store.borrow(), cat);
-    });
-    spawn_arrivals(window, &store.borrow(), catalog);
+    populate_form(window, None, -1, None, form_stops);
+    rebuild_rows(window, &store.borrow());
+    spawn_arrivals(window, &store.borrow());
     window.set_screen(Screen::List);
 }
 
@@ -505,11 +639,12 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
     ));
 
     let window = AppWindow::new()?;
+    let form_stops: FormStops = Rc::new(RefCell::new(Vec::new()));
+    rebuild_rows(&window, &store.borrow());
     with_catalog(&catalog, |cat| {
-        rebuild_rows(&window, &store.borrow(), cat);
-        populate_form(&window, None, -1, cat);
+        populate_form(&window, None, -1, cat, &form_stops);
     });
-    spawn_arrivals(&window, &store.borrow(), &catalog);
+    spawn_arrivals(&window, &store.borrow());
     maybe_start_service(&store.borrow());
     window.set_catalog_loading(with_catalog(&catalog, |c| c.is_none()));
     spawn_refresh_if_stale(&catalog, &window, &store_path);
@@ -538,17 +673,16 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
 
     let w = window.as_weak();
     let s = Rc::clone(&store);
-    let c = Arc::clone(&catalog);
     let p = Rc::clone(&store_path);
+    let fs = Rc::clone(&form_stops);
     window.on_save(move || {
         if let Some(w) = w.upgrade() {
-            handle_save(&w, &s, &c, &p);
+            handle_save(&w, &s, &p, &fs);
         }
     });
 
     let w = window.as_weak();
     let s = Rc::clone(&store);
-    let c = Arc::clone(&catalog);
     let p = Rc::clone(&store_path);
     window.on_delete(move |index| {
         if let Some(w) = w.upgrade()
@@ -560,28 +694,34 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
                 persist(&store, &p);
             }
             drop(store);
-            with_catalog(&c, |cat| rebuild_rows(&w, &s.borrow(), cat));
-            spawn_arrivals(&w, &s.borrow(), &c);
+            rebuild_rows(&w, &s.borrow());
+            spawn_arrivals(&w, &s.borrow());
         }
     });
 
     let w = window.as_weak();
     let s = Rc::clone(&store);
     let c = Arc::clone(&catalog);
+    let fs = Rc::clone(&form_stops);
     window.on_edit(move |index| {
         if let Some(w) = w.upgrade()
             && let Ok(i) = usize::try_from(index)
         {
             let commute = s.borrow().commutes.get(i).cloned();
-            with_catalog(&c, |cat| populate_form(&w, commute.as_ref(), index, cat));
+            with_catalog(&c, |cat| {
+                populate_form(&w, commute.as_ref(), index, cat, &fs);
+            });
         }
     });
 
     let w = window.as_weak();
     let c = Arc::clone(&catalog);
+    let fs = Rc::clone(&form_stops);
     window.on_new_commute(move || {
         if let Some(w) = w.upgrade() {
-            with_catalog(&c, |cat| populate_form(&w, None, -1, cat));
+            with_catalog(&c, |cat| {
+                populate_form(&w, None, -1, cat, &fs);
+            });
         }
     });
 
@@ -593,18 +733,60 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
         }
     });
 
+    // Picking a stop appends it (with its services) to the editor's stop list.
     let w = window.as_weak();
     let c = Arc::clone(&catalog);
+    let fs = Rc::clone(&form_stops);
     window.on_stop_picked(move |code| {
         if let Some(w) = w.upgrade() {
-            let name = with_catalog(&c, |cat| {
-                cat.and_then(|k| k.stop(&code))
-                    .map_or_else(String::new, |s| s.name.clone())
+            let (name, services) = with_catalog(&c, |cat| {
+                let name = cat
+                    .and_then(|k| k.stop(&code))
+                    .map_or_else(String::new, |s| s.name.clone());
+                (name, stop_services(cat, &code))
             });
-            w.set_form_stop_code(code.clone());
-            w.set_form_stop_name(SharedString::from(name));
-            w.set_stop_services(with_catalog(&c, |cat| services_model(cat, &code)));
-            w.set_form_line(SharedString::new());
+            let selected = vec![false; services.len()];
+            fs.borrow_mut().push(EditStopState {
+                code: code.to_string(),
+                name,
+                services,
+                selected,
+            });
+            push_form_stops(&w, &fs.borrow());
+            w.set_screen(Screen::Editor);
+        }
+    });
+
+    // Toggle a bus chip on stop `si`, service index `bi`.
+    let w = window.as_weak();
+    let fs = Rc::clone(&form_stops);
+    window.on_toggle_bus(move |si, bi| {
+        if let Some(w) = w.upgrade()
+            && let (Ok(si), Ok(bi)) = (usize::try_from(si), usize::try_from(bi))
+        {
+            if let Some(sel) = fs
+                .borrow_mut()
+                .get_mut(si)
+                .and_then(|stop| stop.selected.get_mut(bi))
+            {
+                *sel = !*sel;
+            }
+            push_form_stops(&w, &fs.borrow());
+        }
+    });
+
+    let w = window.as_weak();
+    let fs = Rc::clone(&form_stops);
+    window.on_remove_stop(move |si| {
+        if let Some(w) = w.upgrade()
+            && let Ok(si) = usize::try_from(si)
+        {
+            let mut stops = fs.borrow_mut();
+            if si < stops.len() {
+                stops.remove(si);
+            }
+            drop(stops);
+            push_form_stops(&w, &fs.borrow());
         }
     });
 
@@ -612,12 +794,11 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
     let arrivals_timer = Timer::default();
     let w = window.as_weak();
     let s = Rc::clone(&store);
-    let c = Arc::clone(&catalog);
     arrivals_timer.start(TimerMode::Repeated, Duration::from_secs(15), move || {
         if ON_LIST.load(Ordering::Relaxed)
             && let Some(w) = w.upgrade()
         {
-            spawn_arrivals(&w, &s.borrow(), &c);
+            spawn_arrivals(&w, &s.borrow());
         }
     });
 

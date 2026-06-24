@@ -1,7 +1,7 @@
 import { Palette, Type } from "theme.slint";
 import {
-    PhoneColumn, AppBar, PrimaryButton, Chip, DayToggle, TextField, TimeStepper,
-    FloatingAddButton, CommuteCard, StopResultRow,
+    PhoneColumn, AppBar, PrimaryButton, GhostButton, Chip, DayToggle, TextField, TimeStepper,
+    FloatingAddButton, StopResultRow, TimelineLane, StopEditorCard, ArrivalTag, StopLane,
 } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
@@ -10,6 +10,15 @@ struct CommuteRow {
     status: string,
     active: bool,
     index: int,
+    lanes: [StopLane],
+    scale-max: int,
+}
+
+struct EditStop {
+    code: string,
+    name: string,
+    services: [string],
+    selected: [bool],
 }
 
 struct StopResult {
@@ -28,10 +37,8 @@ export component AppWindow inherits Window {
 
     // Editor form state.
     in-out property <int> editing-index: -1;
-    in-out property <string> form-stop-code;
-    in-out property <string> form-stop-name;
-    in-out property <string> form-line;
-    in property <[string]> stop-services;
+    in-out property <string> form-label;
+    in property <[EditStop]> form-stops;
     in-out property <bool> day-mon;
     in-out property <bool> day-tue;
     in-out property <bool> day-wed;
@@ -56,6 +63,8 @@ export component AppWindow inherits Window {
     callback new-commute();
     callback search-changed();
     callback stop-picked(string);
+    callback toggle-bus(int, int);
+    callback remove-stop(int);
     callback pick-time(string);
     callback screen-changed(bool);
 
@@ -64,7 +73,7 @@ export component AppWindow inherits Window {
         root.screen-changed(self.screen == Screen.list);
     }
 
-    title: "SG Bus Ready";
+    title: "SG Bus Commute";
     background: Palette.bg;
     preferred-width: 400px;
     preferred-height: 780px;
@@ -90,13 +99,55 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     spacing: 10px;
                     alignment: start;
-                    for row in root.rows: CommuteCard {
-                        label: row.label;
-                        status: row.status;
-                        active: row.active;
-                        clicked => {
-                            root.edit(row.index);
-                            root.screen = Screen.editor;
+                    for row in root.rows: Rectangle {
+                        border-radius: 18px;
+                        background: row.active ? Palette.hero : Palette.surface;
+                        border-width: 1px;
+                        border-color: row.active ? Palette.accent-solid : Palette.hairline;
+                        VerticalLayout {
+                            padding: 14px;
+                            spacing: 8px;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: row.label;
+                                    font-size: Type.body;
+                                    font-weight: 700;
+                                    color: Palette.text;
+                                    overflow: elide;
+                                }
+                                if row.active: Rectangle {
+                                    background: Palette.accent-solid;
+                                    border-radius: 11px;
+                                    HorizontalLayout {
+                                        padding-left: 9px;
+                                        padding-right: 9px;
+                                        Text { vertical-alignment: center; text: "live"; font-size: Type.label; font-weight: 600; color: Palette.on-accent; }
+                                    }
+                                }
+                                if !row.active: Text { text: "›"; font-size: 20px; color: Palette.text-dim; }
+                            }
+                            if !row.active: Text {
+                                text: row.status;
+                                font-size: Type.caption;
+                                color: Palette.text-dim;
+                                wrap: word-wrap;
+                            }
+                            if row.active: VerticalLayout {
+                                spacing: 6px;
+                                for lane in row.lanes: TimelineLane {
+                                    name: lane.name;
+                                    tags: lane.tags;
+                                    scale-max: row.scale-max;
+                                }
+                            }
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.edit(row.index);
+                                root.screen = Screen.editor;
+                            }
                         }
                     }
                     if root.rows.length == 0: Text {
@@ -140,60 +191,10 @@ export component AppWindow inherits Window {
                     spacing: 8px;
                     alignment: start;
 
-                    Text { text: "Stop"; font-size: Type.label; color: Palette.text-faint; }
-                    Rectangle {
-                        height: 58px;
-                        border-radius: 12px;
-                        background: Palette.surface;
-                        border-width: 1px;
-                        border-color: Palette.hairline;
-                        HorizontalLayout {
-                            padding-left: 13px;
-                            padding-right: 13px;
-                            VerticalLayout {
-                                horizontal-stretch: 1;
-                                alignment: center;
-                                spacing: 2px;
-                                Text {
-                                    text: root.form-stop-name == "" ? "Choose a stop" : root.form-stop-name;
-                                    color: root.form-stop-name == "" ? Palette.text-faint : Palette.text;
-                                    font-weight: 600;
-                                    font-size: Type.body;
-                                    overflow: elide;
-                                }
-                                if root.form-stop-code != "": Text {
-                                    text: root.form-stop-code;
-                                    font-size: Type.label;
-                                    color: Palette.text-dim;
-                                }
-                            }
-                            Text { text: "›"; font-size: 20px; color: Palette.text-dim; vertical-alignment: center; }
-                        }
-                        TouchArea {
-                            clicked => {
-                                root.search-query = "";
-                                root.screen = Screen.search;
-                            }
-                        }
-                    }
-
-                    Text { text: "Line at this stop"; font-size: Type.label; color: Palette.text-faint; }
-                    ScrollView {
-                        height: 46px;
-                        HorizontalLayout {
-                            spacing: 8px;
-                            for svc in root.stop-services: Chip {
-                                text: svc;
-                                selected: svc == root.form-line;
-                                toggled => { root.form-line = svc; }
-                            }
-                            if root.stop-services.length == 0: Text {
-                                text: "Pick a stop first";
-                                color: Palette.text-faint;
-                                font-size: Type.body;
-                                vertical-alignment: center;
-                            }
-                        }
+                    Text { text: "Label"; font-size: Type.label; color: Palette.text-faint; }
+                    TextField {
+                        placeholder: "Label (optional)";
+                        text <=> root.form-label;
                     }
 
                     Text { text: "Active days"; font-size: Type.label; color: Palette.text-faint; }
@@ -222,6 +223,23 @@ export component AppWindow inherits Window {
                             hour: root.end-hour;
                             minute: root.end-minute;
                             picked => { root.pick-time("end"); }
+                        }
+                    }
+
+                    Text { text: "Stops & buses"; font-size: Type.label; color: Palette.text-faint; }
+                    for st[si] in root.form-stops: StopEditorCard {
+                        name: st.name;
+                        code: st.code;
+                        services: st.services;
+                        selected: st.selected;
+                        remove => { root.remove-stop(si); }
+                        toggle(bi) => { root.toggle-bus(si, bi); }
+                    }
+                    GhostButton {
+                        text: "+ Add stop";
+                        clicked => {
+                            root.search-query = "";
+                            root.screen = Screen.search;
                         }
                     }
 
@@ -281,7 +299,6 @@ export component AppWindow inherits Window {
                             clicked => {
                                 sf.defocus();
                                 root.stop-picked(r.code);
-                                root.screen = Screen.editor;
                             }
                         }
                     }

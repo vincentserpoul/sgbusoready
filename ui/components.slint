@@ -3,6 +3,20 @@
 
 import { Palette, Type } from "theme.slint";
 
+// One bus arrival group on a lane: pre-joined bus label (e.g. "14e·16") and its
+// whole-minute countdown, which positions it on the shared scale.
+export struct ArrivalTag {
+    buses: string,
+    minutes: int,
+}
+
+// One stop's timeline lane.
+export struct StopLane {
+    name: string,
+    code: string,
+    tags: [ArrivalTag],
+}
+
 // Content fills the screen width (phone-first); per-screen padding provides the
 // margins. Kept as a wrapper so screens can opt into a different layout later.
 export component PhoneColumn inherits VerticalLayout {
@@ -282,6 +296,148 @@ export component CommuteCard inherits Rectangle {
     }
     ta := TouchArea {
         clicked => { root.clicked(); }
+    }
+}
+
+// A single stop's arrival timeline: bus pills above a baseline, a thin leader to
+// each arrival's exact minute, and the red minute below. All tags share one
+// scale (`scale-max` minutes across the lane width).
+export component TimelineLane inherits Rectangle {
+    in property <string> name;
+    in property <[ArrivalTag]> tags;
+    in property <int> scale-max: 15;
+    height: 74px;
+    property <length> pad-l: 6px;
+    property <length> usable: self.width - root.pad-l - 12px;
+    VerticalLayout {
+        spacing: 2px;
+        Text {
+            text: root.name;
+            font-size: Type.label;
+            color: Palette.text-dim;
+            overflow: elide;
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            // baseline
+            Rectangle {
+                x: root.pad-l;
+                y: parent.height - 22px;
+                width: root.usable;
+                height: 2px;
+                background: Palette.hairline;
+            }
+            // now dot
+            Rectangle {
+                x: root.pad-l - 4px;
+                y: parent.height - 26px;
+                width: 9px;
+                height: 9px;
+                border-radius: 5px;
+                background: Palette.accent-solid;
+            }
+            for tag in root.tags: Rectangle {
+                property <length> cx: root.pad-l + root.usable * (tag.minutes / max(root.scale-max, 1));
+                // leader
+                Rectangle {
+                    x: parent.cx - 1px;
+                    y: 22px;
+                    width: 2px;
+                    height: parent.height - 44px;
+                    background: Palette.hairline;
+                }
+                // bus pill above the line
+                pill := Rectangle {
+                    x: parent.cx - self.width / 2;
+                    y: 2px;
+                    height: 22px;
+                    border-radius: 8px;
+                    background: Palette.accent-solid;
+                    HorizontalLayout {
+                        padding-left: 7px;
+                        padding-right: 7px;
+                        Text {
+                            vertical-alignment: center;
+                            text: tag.buses;
+                            font-size: Type.label;
+                            font-weight: 700;
+                            color: Palette.on-accent;
+                        }
+                    }
+                }
+                // red minute below the line
+                Text {
+                    x: parent.cx - self.width / 2;
+                    y: parent.height - 18px;
+                    text: tag.minutes <= 0 ? "due" : "\{tag.minutes}";
+                    font-size: Type.label;
+                    font-weight: 700;
+                    color: Palette.accent-solid;
+                }
+            }
+        }
+    }
+}
+
+// An editor card for one stop: name/code, a remove control, and the stop's
+// services as toggle-chips (selected = tracked).
+export component StopEditorCard inherits Rectangle {
+    in property <string> name;
+    in property <string> code;
+    in property <[string]> services;
+    in property <[bool]> selected;
+    callback remove();
+    callback toggle(int);
+    border-radius: 12px;
+    background: Palette.surface;
+    border-width: 1px;
+    border-color: Palette.hairline;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 6px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 1px;
+                Text {
+                    text: root.name == "" ? root.code : root.name;
+                    font-weight: 700;
+                    font-size: Type.body;
+                    color: Palette.text;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.code;
+                    font-size: Type.label;
+                    color: Palette.text-dim;
+                }
+            }
+            Rectangle {
+                width: 32px;
+                Text { text: "✕"; font-size: 18px; color: Palette.text-dim; }
+                TouchArea { clicked => { root.remove(); } }
+            }
+        }
+        Flickable {
+            height: 46px;
+            viewport-width: row.preferred-width;
+            viewport-height: self.height;
+            row := HorizontalLayout {
+                spacing: 8px;
+                for svc[i] in root.services: Chip {
+                    text: svc;
+                    selected: root.selected[i];
+                    toggled => { root.toggle(i); }
+                }
+                if root.services.length == 0: Text {
+                    text: "No services found";
+                    color: Palette.text-faint;
+                    vertical-alignment: center;
+                    font-size: Type.body;
+                }
+            }
+        }
     }
 }
 
