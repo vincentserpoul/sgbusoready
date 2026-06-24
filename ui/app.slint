@@ -57,6 +57,12 @@ export component AppWindow inherits Window {
     callback search-changed();
     callback stop-picked(string);
     callback pick-time(string);
+    callback screen-changed(bool);
+
+    // Keep the native side informed which screen is showing (for Back handling).
+    changed screen => {
+        root.screen-changed(self.screen == Screen.list);
+    }
 
     title: "SG Bus Ready";
     background: Palette.bg;

@@ -10,9 +10,10 @@
          status-bar/lock-screen chip. Non-runtime; pre-36 ignores it. -->
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <application
-        android:label="SG Bus Ready">
+        android:label="SG Bus Ready"
+        android:enableOnBackInvokedCallback="true">
         <activity
-            android:name="android.app.NativeActivity"
+            android:name=".MainActivity"
             android:exported="true"
             android:configChanges="orientation|keyboardHidden|screenSize">
             <meta-data android:name="android.app.lib_name" android:value="sgbusoready" />

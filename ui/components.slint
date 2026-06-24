@@ -3,17 +3,10 @@
 
 import { Palette, Type } from "theme.slint";
 
-// Centers content in a phone-width column so the layout stays tidy at any window
-// size (desktop) and matches the device width (Android fills the screen).
-export component PhoneColumn inherits HorizontalLayout {
-    Rectangle { horizontal-stretch: 1; }
-    VerticalLayout {
-        horizontal-stretch: 0;
-        max-width: 720px;
-        min-width: 300px;
-        @children
-    }
-    Rectangle { horizontal-stretch: 1; }
+// Content fills the screen width (phone-first); per-screen padding provides the
+// margins. Kept as a wrapper so screens can opt into a different layout later.
+export component PhoneColumn inherits VerticalLayout {
+    @children
 }
 
 export component AppBar inherits Rectangle {

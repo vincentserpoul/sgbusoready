@@ -12,4 +12,8 @@ object CommuteNative {
 
     /** Implemented in Rust: deliver a native time-picker result to the editor. */
     external fun onTimePicked(tag: String, hour: Int, minute: Int)
+
+    /** Implemented in Rust: handle system Back. Returns true if consumed
+     *  (navigated to the list); false to let the app finish. */
+    external fun onBackPressed(): Boolean
 }

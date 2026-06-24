@@ -48,6 +48,7 @@ mod android_bridge;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use sgbr_core::bus_catalog::fetch::fetch_catalog;
@@ -76,10 +77,14 @@ fn now_sgt() -> OffsetDateTime {
     OffsetDateTime::now_utc().to_offset(offset!(+8))
 }
 
-/// Stash of the editor window so the native time-picker JNI callback can reach
-/// it (set once in `run_app`).
+/// Stash of the editor window so the native time-picker / back JNI callbacks can
+/// reach it (set once in `run_app`).
 #[cfg(target_os = "android")]
 static EDITOR_WINDOW: Mutex<Option<slint::Weak<AppWindow>>> = Mutex::new(None);
+
+/// Whether the list screen is showing (kept in sync from Slint), so the native
+/// Back handler knows whether to navigate to the list or let the app finish.
+static ON_LIST: AtomicBool = AtomicBool::new(true);
 
 /// Open the native time picker for `tag` ("start"/"end"); no-op off Android.
 #[allow(
@@ -128,6 +133,31 @@ pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_onTimePicked(
             }
         }
     });
+}
+
+/// Handle system Back: if on a sub-screen, navigate to the list and return true
+/// (consumed); on the list, return false so the app finishes.
+#[cfg(target_os = "android")]
+#[allow(
+    unsafe_code,
+    reason = "Android JNI export; the sole unsafe surface per the platform-bridge exception"
+)]
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_onBackPressed(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) -> jni::sys::jboolean {
+    if ON_LIST.load(Ordering::Relaxed) {
+        return 0;
+    }
+    let _ = slint::invoke_from_event_loop(|| {
+        if let Ok(guard) = EDITOR_WINDOW.lock()
+            && let Some(w) = guard.as_ref().and_then(slint::Weak::upgrade)
+        {
+            w.set_screen(Screen::List);
+        }
+    });
+    1
 }
 
 /// Run `f` with a borrow of the catalog, tolerating lock poisoning.
@@ -407,6 +437,8 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
             pick_time(&tag, h, m);
         }
     });
+
+    window.on_screen_changed(|is_list| ON_LIST.store(is_list, Ordering::Relaxed));
 
     let w = window.as_weak();
     let s = Rc::clone(&store);
