@@ -76,6 +76,60 @@ fn now_sgt() -> OffsetDateTime {
     OffsetDateTime::now_utc().to_offset(offset!(+8))
 }
 
+/// Stash of the editor window so the native time-picker JNI callback can reach
+/// it (set once in `run_app`).
+#[cfg(target_os = "android")]
+static EDITOR_WINDOW: Mutex<Option<slint::Weak<AppWindow>>> = Mutex::new(None);
+
+/// Open the native time picker for `tag` ("start"/"end"); no-op off Android.
+#[allow(
+    clippy::missing_const_for_fn,
+    reason = "non-const on Android, where it calls into the JNI bridge"
+)]
+fn pick_time(tag: &str, hour: i32, minute: i32) {
+    #[cfg(target_os = "android")]
+    android_bridge::show_time_picker(tag, hour, minute);
+    #[cfg(not(target_os = "android"))]
+    let _ = (tag, hour, minute);
+}
+
+/// A small dp value as a Slint logical length (logical px ≈ dp on Android).
+#[cfg(target_os = "android")]
+#[allow(clippy::cast_precision_loss, reason = "small status-bar dp value")]
+fn dp_to_length(dp: i32) -> f32 {
+    dp as f32
+}
+
+/// Deliver a native time-picker result (`tag` = "start"/"end") to the editor.
+#[cfg(target_os = "android")]
+#[allow(
+    unsafe_code,
+    reason = "Android JNI export; the sole unsafe surface per the platform-bridge exception"
+)]
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_onTimePicked(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    tag: jni::objects::JString,
+    hour: jni::sys::jint,
+    minute: jni::sys::jint,
+) {
+    let tag: String = env.get_string(&tag).map(Into::into).unwrap_or_default();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Ok(guard) = EDITOR_WINDOW.lock()
+            && let Some(w) = guard.as_ref().and_then(slint::Weak::upgrade)
+        {
+            if tag == "start" {
+                w.set_start_hour(hour);
+                w.set_start_minute(minute);
+            } else {
+                w.set_end_hour(hour);
+                w.set_end_minute(minute);
+            }
+        }
+    });
+}
+
 /// Run `f` with a borrow of the catalog, tolerating lock poisoning.
 fn with_catalog<R>(catalog: &Catalog, f: impl FnOnce(Option<&BusCatalog>) -> R) -> R {
     match catalog.lock() {
@@ -334,6 +388,26 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
     window.set_catalog_loading(with_catalog(&catalog, |c| c.is_none()));
     spawn_refresh_if_stale(&catalog, &window, &store_path);
 
+    #[cfg(target_os = "android")]
+    {
+        window.set_top_inset(dp_to_length(android_bridge::status_bar_top_dp()));
+        if let Ok(mut g) = EDITOR_WINDOW.lock() {
+            *g = Some(window.as_weak());
+        }
+    }
+
+    let w = window.as_weak();
+    window.on_pick_time(move |tag| {
+        if let Some(w) = w.upgrade() {
+            let (h, m) = if tag == "start" {
+                (w.get_start_hour(), w.get_start_minute())
+            } else {
+                (w.get_end_hour(), w.get_end_minute())
+            };
+            pick_time(&tag, h, m);
+        }
+    });
+
     let w = window.as_weak();
     let s = Rc::clone(&store);
     let c = Arc::clone(&catalog);
@@ -417,6 +491,7 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
     android_bridge::ensure_logger();
+    android_bridge::set_activity_ptr(app.activity_as_ptr());
     let store_path = app
         .internal_data_path()
         .map(|p| p.join("commutes.json"))

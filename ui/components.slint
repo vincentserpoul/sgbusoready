@@ -9,7 +9,7 @@ export component PhoneColumn inherits HorizontalLayout {
     Rectangle { horizontal-stretch: 1; }
     VerticalLayout {
         horizontal-stretch: 0;
-        max-width: 440px;
+        max-width: 720px;
         min-width: 300px;
         @children
     }
@@ -189,56 +189,39 @@ export component TextField inherits Rectangle {
     }
 }
 
-component NumStepper inherits VerticalLayout {
-    in property <int> value;
-    in property <int> max;
-    callback changed(int);
-    alignment: center;
-    spacing: 1px;
-    Rectangle {
-        height: 16px;
-        Text { text: "↑"; font-size: 11px; color: Palette.text-dim; }
-        TouchArea { clicked => { root.changed(root.value >= root.max ? 0 : root.value + 1); } }
-    }
-    Text {
-        text: root.value < 10 ? "0\{root.value}" : "\{root.value}";
-        font-size: 19px;
-        font-weight: 700;
-        color: Palette.text;
-        horizontal-alignment: center;
-    }
-    Rectangle {
-        height: 16px;
-        Text { text: "↓"; font-size: 11px; color: Palette.text-dim; }
-        TouchArea { clicked => { root.changed(root.value <= 0 ? root.max : root.value - 1); } }
-    }
-}
-
+// A tappable time field: shows HH:MM and emits `picked()` (the app opens the
+// native Android time picker, which writes the value back).
 export component TimeStepper inherits Rectangle {
     in property <string> caption;
-    in-out property <int> hour;
-    in-out property <int> minute;
-    height: 78px;
+    in property <int> hour;
+    in property <int> minute;
+    callback picked();
+    height: 74px;
     border-radius: 12px;
     background: Palette.surface;
     border-width: 1px;
     border-color: Palette.hairline;
+    opacity: ta.pressed ? 0.8 : 1.0;
+    animate opacity { duration: 100ms; easing: ease-out; }
     VerticalLayout {
-        padding: 8px;
-        spacing: 2px;
+        padding: 10px;
+        spacing: 4px;
         Text {
             text: root.caption;
             font-size: Type.label;
             color: Palette.text-faint;
             horizontal-alignment: center;
         }
-        HorizontalLayout {
-            alignment: center;
-            spacing: 6px;
-            NumStepper { value: root.hour; max: 23; changed(v) => { root.hour = v; } }
-            Text { text: ":"; font-size: 19px; font-weight: 700; color: Palette.text; vertical-alignment: center; }
-            NumStepper { value: root.minute; max: 59; changed(v) => { root.minute = v; } }
+        Text {
+            text: (root.hour < 10 ? "0\{root.hour}" : "\{root.hour}") + ":" + (root.minute < 10 ? "0\{root.minute}" : "\{root.minute}");
+            font-size: 26px;
+            font-weight: 700;
+            color: Palette.text;
+            horizontal-alignment: center;
         }
+    }
+    ta := TouchArea {
+        clicked => { root.picked(); }
     }
 }
 

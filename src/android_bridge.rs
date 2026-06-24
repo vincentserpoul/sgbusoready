@@ -17,7 +17,9 @@
     reason = "Android JNI requires raw VM/Context pointers; the sole unsafe surface, per the platform-bridge exception in the design doc"
 )]
 
+use std::ffi::c_void;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jni::objects::{JClass, JObject, JString, JValue};
 use jni::sys::{jlong, jstring};
@@ -136,6 +138,74 @@ pub fn arm_alarms() {
     match arm_alarms_inner() {
         Ok(()) => log::info!("jni: alarms armed"),
         Err(e) => log::error!("jni: arm alarms failed: {e:?}"),
+    }
+}
+
+fn status_bar_top_dp_inner() -> Result<i32, JniError> {
+    let ctx = ndk_context::android_context();
+    // SAFETY: ndk-context holds the process JavaVM, valid for the process life.
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    // SAFETY: ndk-context holds the running Activity (a Context) jobject.
+    let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+    let helper = load_app_class(&mut env, &activity, "com.serpoul.sgbusready.InsetsHelper")?;
+    let value = env.call_static_method(
+        &helper,
+        "statusBarTopDp",
+        "(Landroid/content/Context;)I",
+        &[JValue::Object(&activity)],
+    )?;
+    value.i()
+}
+
+/// The status-bar height in dp (Slint logical units); 0 on failure.
+pub fn status_bar_top_dp() -> i32 {
+    status_bar_top_dp_inner().unwrap_or(0)
+}
+
+/// The `NativeActivity` jobject (stashed in `android_main`). `ndk-context`'s
+/// `context()` is the *Application*, but a dialog needs the *Activity*.
+static ACTIVITY_PTR: AtomicUsize = AtomicUsize::new(0);
+
+/// Stash the `NativeActivity` pointer for code that needs the Activity (dialogs).
+pub fn set_activity_ptr(ptr: *mut c_void) {
+    ACTIVITY_PTR.store(ptr as usize, Ordering::Relaxed);
+}
+
+fn show_time_picker_inner(tag: &str, hour: i32, minute: i32) -> Result<(), JniError> {
+    let ctx = ndk_context::android_context();
+    // SAFETY: ndk-context holds the process JavaVM, valid for the process life.
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    // SAFETY: the stashed NativeActivity jobject is a global ref held for the
+    // activity's lifetime; a dialog requires the Activity, not the Application.
+    let activity = unsafe { JObject::from_raw(ACTIVITY_PTR.load(Ordering::Relaxed) as jni::sys::jobject) };
+    let helper = load_app_class(&mut env, &activity, "com.serpoul.sgbusready.TimePicker")?;
+    let jtag = env.new_string(tag)?;
+    let call = env.call_static_method(
+        &helper,
+        "show",
+        "(Landroid/content/Context;Ljava/lang/String;II)V",
+        &[
+            JValue::Object(&activity),
+            JValue::Object(&jtag),
+            JValue::Int(hour),
+            JValue::Int(minute),
+        ],
+    );
+    if call.is_err() {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+    }
+    call?;
+    Ok(())
+}
+
+/// Show the native Android `TimePickerDialog`; the result comes back via the
+/// `CommuteNative.onTimePicked` JNI export. `tag` is "start" or "end".
+pub fn show_time_picker(tag: &str, hour: i32, minute: i32) {
+    if let Err(e) = show_time_picker_inner(tag, hour, minute) {
+        log::error!("jni: show time picker failed: {e:?}");
     }
 }
 

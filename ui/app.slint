@@ -23,6 +23,8 @@ enum Screen { list, editor, search }
 export component AppWindow inherits Window {
     in property <[CommuteRow]> rows;
     in-out property <Screen> screen: Screen.list;
+    // Top status-bar inset (the app draws edge-to-edge on Android).
+    in property <length> top-inset: 0px;
 
     // Editor form state.
     in-out property <int> editing-index: -1;
@@ -54,6 +56,7 @@ export component AppWindow inherits Window {
     callback new-commute();
     callback search-changed();
     callback stop-picked(string);
+    callback pick-time(string);
 
     title: "SG Bus Ready";
     background: Palette.bg;
@@ -65,7 +68,10 @@ export component AppWindow inherits Window {
         visible: root.screen == Screen.list;
         PhoneColumn {
         VerticalLayout {
-            padding: 16px;
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-bottom: 16px;
+            padding-top: root.top-inset + 16px;
             spacing: 12px;
             Text {
                 text: "Commutes";
@@ -98,7 +104,7 @@ export component AppWindow inherits Window {
         }
         FloatingAddButton {
             x: parent.width - self.width - 20px;
-            y: parent.height - self.height - 20px;
+            y: parent.height - self.height - 36px;
             clicked => {
                 root.new-commute();
                 root.screen = Screen.editor;
@@ -111,6 +117,7 @@ export component AppWindow inherits Window {
         visible: root.screen == Screen.editor;
         PhoneColumn {
         VerticalLayout {
+            padding-top: root.top-inset;
             AppBar {
                 title: root.editing-index < 0 ? "New commute" : "Edit commute";
                 show-back: true;
@@ -198,8 +205,18 @@ export component AppWindow inherits Window {
                     Text { text: "Window"; font-size: Type.label; color: Palette.text-faint; }
                     HorizontalLayout {
                         spacing: 10px;
-                        TimeStepper { caption: "Start"; hour <=> root.start-hour; minute <=> root.start-minute; }
-                        TimeStepper { caption: "End"; hour <=> root.end-hour; minute <=> root.end-minute; }
+                        TimeStepper {
+                            caption: "Start";
+                            hour: root.start-hour;
+                            minute: root.start-minute;
+                            picked => { root.pick-time("start"); }
+                        }
+                        TimeStepper {
+                            caption: "End";
+                            hour: root.end-hour;
+                            minute: root.end-minute;
+                            picked => { root.pick-time("end"); }
+                        }
                     }
 
                     if root.error-text != "": Text {
@@ -225,6 +242,7 @@ export component AppWindow inherits Window {
         visible: root.screen == Screen.search;
         PhoneColumn {
         VerticalLayout {
+            padding-top: root.top-inset;
             AppBar {
                 title: "Choose stop";
                 show-back: true;

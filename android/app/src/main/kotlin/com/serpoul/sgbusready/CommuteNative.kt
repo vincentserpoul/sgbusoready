@@ -9,4 +9,7 @@ object CommuteNative {
 
     /** Epoch millis of the next window boundary to wake at, or -1 if none. */
     external fun nextAlarmEpochMillis(filesDir: String, epochSecs: Long): Long
+
+    /** Implemented in Rust: deliver a native time-picker result to the editor. */
+    external fun onTimePicked(tag: String, hour: Int, minute: Int)
 }
