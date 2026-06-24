@@ -21,7 +21,7 @@ class CommuteService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         NotificationHelper.ensureChannel(this)
-        startForegroundCompat(buildNotification("SG Bus Ready", "Updating…"))
+        startForegroundCompat(buildNotification("SG Bus Commute", "Updating…"))
         // Re-arm the next boundary (next window start, or this window's end).
         AlarmScheduler.arm(this)
         if (!running) {
@@ -64,12 +64,11 @@ class CommuteService : Service() {
             .setShortCriticalText(chipText(text))
             .build()
 
-    /** Compact status-bar chip text, e.g. body "Bus 15 · 3 min · 22 min" -> "15 · 3 min". */
+    /** Compact status-bar chip, e.g. line "Opp Blk 123: 2m (14), 4m (14e)" -> "2m (14)". */
     private fun chipText(body: String): String {
-        val parts = body.substringBefore('\n').split(" · ")
-        val line = parts.getOrElse(0) { "" }.removePrefix("Bus ")
-        val first = parts.getOrElse(1) { "" }
-        return if (first.isEmpty()) line else "$line · $first"
+        val firstLine = body.substringBefore('\n')
+        val afterColon = firstLine.substringAfter(": ", "")
+        return afterColon.substringBefore(", ").ifEmpty { firstLine }
     }
 
     private fun startForegroundCompat(notif: Notification) {
