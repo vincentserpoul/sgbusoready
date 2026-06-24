@@ -36,14 +36,11 @@ allow = [
   "BSL-1.0",
   "CDLA-Permissive-2.0",
   "Unlicense",
-  # Slint is used under its Royalty-Free license (free, incl. proprietary use).
-  # The crates are tri-licensed GPL-3.0 / Royalty-Free / paid Software; we elect
-  # the Royalty-Free option. Confirm this matches your distribution intent.
-  "LicenseRef-Slint-Royalty-free-2.0",
+  # This app is licensed GPL-3.0-only (see LICENSE), which is also the license we
+  # elect for Slint (tri-licensed GPL-3.0 / Royalty-Free / paid Software).
+  "GPL-3.0-only",
 ]
 confidence-threshold = 0.8
-# Our own workspace crates carry no `license` field; don't flag them.
-private = { ignore = true }
 
 # Ring uses a custom license that's permissive (likely pulled in via rustls).
 [[licenses.clarify]]

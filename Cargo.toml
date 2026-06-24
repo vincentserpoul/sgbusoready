@@ -47,6 +47,7 @@ store = { path = ".supply-chain" }
 name = "sgbusoready"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-only"
 
 # `rlib` lets `main.rs` call the shared library; `cdylib` is what cargo-apk
 # packages for Android (the `android_main` entry lives in `src/lib.rs`).
@@ -82,7 +83,7 @@ android_logger = "0.14"
 # flattens them into ndk-build's Sdk struct; placed directly under
 # [package.metadata.android] they are silently ignored and target defaults to 30.
 [package.metadata.android]
-package = "com.serpoul.sgbusready"
+package = "com.sgbusoready"
 build_targets = ["aarch64-linux-android"]
 
 [package.metadata.android.sdk]

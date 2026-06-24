@@ -1,4 +1,4 @@
-package com.serpoul.sgbusready
+package com.sgbusoready
 
 import android.app.AlarmManager
 import android.app.PendingIntent

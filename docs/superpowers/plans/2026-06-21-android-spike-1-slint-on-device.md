@@ -241,7 +241,7 @@ In root `Cargo.toml`, add:
 
 ```toml
 [package.metadata.android]
-package = "com.serpoul.sgbusready"
+package = "com.sgbusoready"
 build_targets = ["aarch64-linux-android"]
 min_sdk_version = 24
 target_sdk_version = 34

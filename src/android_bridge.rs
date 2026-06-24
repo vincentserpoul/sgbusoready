@@ -1,7 +1,7 @@
 //! Android JNI bridge.
 //!
 //! Two directions:
-//! - **Kotlin → Rust** (`Java_com_serpoul_sgbusready_CommuteNative_*`): the
+//! - **Kotlin → Rust** (`Java_com_sgbusoready_CommuteNative_*`): the
 //!   foreground service / scheduler ask Rust what to show and when to wake.
 //!   The `JNIEnv` is supplied and the calling thread is a normal Java thread,
 //!   so no class-loader dance is needed.
@@ -118,7 +118,7 @@ fn arm_alarms_inner() -> Result<(), JniError> {
     let mut env = vm.attach_current_thread()?;
     // SAFETY: ndk-context holds the running Activity (a Context) jobject.
     let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
-    let scheduler = load_app_class(&mut env, &activity, "com.serpoul.sgbusready.AlarmScheduler")?;
+    let scheduler = load_app_class(&mut env, &activity, "com.sgbusoready.AlarmScheduler")?;
     let call = env.call_static_method(
         &scheduler,
         "arm",
@@ -148,7 +148,7 @@ fn status_bar_top_dp_inner() -> Result<i32, JniError> {
     let mut env = vm.attach_current_thread()?;
     // SAFETY: ndk-context holds the running Activity (a Context) jobject.
     let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
-    let helper = load_app_class(&mut env, &activity, "com.serpoul.sgbusready.InsetsHelper")?;
+    let helper = load_app_class(&mut env, &activity, "com.sgbusoready.InsetsHelper")?;
     let value = env.call_static_method(
         &helper,
         "statusBarTopDp",
@@ -180,7 +180,7 @@ fn show_time_picker_inner(tag: &str, hour: i32, minute: i32) -> Result<(), JniEr
     // SAFETY: the stashed NativeActivity jobject is a global ref held for the
     // activity's lifetime; a dialog requires the Activity, not the Application.
     let activity = unsafe { JObject::from_raw(ACTIVITY_PTR.load(Ordering::Relaxed) as jni::sys::jobject) };
-    let helper = load_app_class(&mut env, &activity, "com.serpoul.sgbusready.TimePicker")?;
+    let helper = load_app_class(&mut env, &activity, "com.sgbusoready.TimePicker")?;
     let jtag = env.new_string(tag)?;
     let call = env.call_static_method(
         &helper,
@@ -215,7 +215,7 @@ pub fn show_time_picker(tag: &str, hour: i32, minute: i32) {
 
 /// `CommuteNative.renderActive(filesDir, epochSecs) -> String`
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_renderActive(
+pub extern "C" fn Java_com_sgbusoready_CommuteNative_renderActive(
     mut env: JNIEnv,
     _class: JClass,
     files_dir: JString,
@@ -235,7 +235,7 @@ pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_renderActive(
 
 /// `CommuteNative.nextAlarmEpochMillis(filesDir, epochSecs) -> long` (-1 = none)
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_nextAlarmEpochMillis(
+pub extern "C" fn Java_com_sgbusoready_CommuteNative_nextAlarmEpochMillis(
     mut env: JNIEnv,
     _class: JClass,
     files_dir: JString,

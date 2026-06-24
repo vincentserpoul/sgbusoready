@@ -78,12 +78,12 @@ plugins {
 }
 
 android {
-    namespace = "com.serpoul.sgbusready"
+    namespace = "com.sgbusoready"
     compileSdk = 35
     ndkVersion = "29.0.14206865"   // match /opt/android-ndk Pkg.Revision
 
     defaultConfig {
-        applicationId = "com.serpoul.sgbusready"
+        applicationId = "com.sgbusoready"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
@@ -148,7 +148,7 @@ Expected: `android/app/build/outputs/apk/debug/app-debug.apk`. If AGP errors on 
 
 ```bash
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-adb shell monkey -p com.serpoul.sgbusready -c android.intent.category.LAUNCHER 1
+adb shell monkey -p com.sgbusoready -c android.intent.category.LAUNCHER 1
 adb exec-out screencap -p > /tmp/sgbr_gradle.png
 ```
 **Success:** the SAME screen as Spike #1 — "Stop 83139", "15 — 8 min, 15 min". This proves the Gradle + cargo-ndk + Slint foundation. **Do not proceed to Phase B until this is green.**
@@ -225,12 +225,12 @@ git commit -m "feat(core): add fire_delay_secs reminder timing"
 
 ### Task B2: Kotlin notification helper
 
-**Files:** Create `android/app/src/main/kotlin/com/serpoul/sgbusready/NotificationHelper.kt`. Flip `android:hasCode` to default (remove `="false"`) in the manifest.
+**Files:** Create `android/app/src/main/kotlin/com/sgbusoready/NotificationHelper.kt`. Flip `android:hasCode` to default (remove `="false"`) in the manifest.
 
 - [ ] **Step 1: Kotlin helper with a JNI-friendly static method**
 
 ```kotlin
-package com.serpoul.sgbusready
+package com.sgbusoready
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -269,7 +269,7 @@ For the spike, prove the bridge by firing a notification once at startup. In `sr
 // 1. let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
 // 2. let mut env = vm.attach_current_thread()?;
 // 3. let activity = /* GlobalRef from app.activity_as_ptr() */;
-// 4. env.call_static_method("com/serpoul/sgbusready/NotificationHelper", "showNow",
+// 4. env.call_static_method("com/sgbusoready/NotificationHelper", "showNow",
 //        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
 //        &[(&activity).into(), (&title).into(), (&text).into()])?;
 ```
@@ -319,6 +319,6 @@ implementation("androidx.glance:glance-appwidget:1.1.0")
 
 **Placeholder scan:** Phase A is concrete and verifiable. The two genuinely uncertain spots — the JNI call sequence (B2 Step 2) and exact AGP/Glance versions — are flagged with the on-device test as the gate, and a "verify against current API" instruction, rather than pretending certainty. This is intentional: the Gradle/JNI specifics can only be pinned against the live NDK/device, which this plan is executed with.
 
-**Type/structure consistency:** `fire_delay_secs(eta_minutes, threshold_secs)` (B1) is the timing source the real-app AlarmManager wiring will consume. `NotificationHelper.showNow(context,title,text)` (B2) and `WidgetData.put(context,key,value)` (C1/C2) are the two Kotlin entry points the Rust JNI bridge calls — consistent across B and C. Package `com.serpoul.sgbusready` matches Spike #1's APK.
+**Type/structure consistency:** `fire_delay_secs(eta_minutes, threshold_secs)` (B1) is the timing source the real-app AlarmManager wiring will consume. `NotificationHelper.showNow(context,title,text)` (B2) and `WidgetData.put(context,key,value)` (C1/C2) are the two Kotlin entry points the Rust JNI bridge calls — consistent across B and C. Package `com.sgbusoready` matches Spike #1's APK.
 
 **Execution note:** Phase A and the on-device parts of B/C need the NDK + phone — run interactively. B1 (sgbr-core timing) is fully autonomous/TDD. Land and verify Phase A before B/C.

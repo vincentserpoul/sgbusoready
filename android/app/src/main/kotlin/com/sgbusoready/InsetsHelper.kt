@@ -1,4 +1,4 @@
-package com.serpoul.sgbusready
+package com.sgbusoready
 
 import android.content.Context
 

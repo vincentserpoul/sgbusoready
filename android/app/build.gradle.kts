@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.serpoul.sgbusready"
+    namespace = "com.sgbusoready"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.serpoul.sgbusready"
+        applicationId = "com.sgbusoready"
         minSdk = 24
         targetSdk = 36
         versionCode = 1

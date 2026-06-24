@@ -134,12 +134,12 @@ plugins {
 }
 
 android {
-    namespace = "com.serpoul.sgbusready"
+    namespace = "com.sgbusoready"
     compileSdk = 35
     ndkVersion = "29.0.14206865"   // /opt/android-ndk Pkg.Revision
 
     defaultConfig {
-        applicationId = "com.serpoul.sgbusready"
+        applicationId = "com.sgbusoready"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
@@ -209,7 +209,7 @@ Expected: `android/app/build/outputs/apk/debug/app-debug.apk`. If AGP errors on 
 
 ```bash
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-adb shell monkey -p com.serpoul.sgbusready -c android.intent.category.LAUNCHER 1
+adb shell monkey -p com.sgbusoready -c android.intent.category.LAUNCHER 1
 adb exec-out screencap -p > /tmp/sgbr_gradle.png
 ```
 **Gate (must be green to proceed):** the SAME screen as Spike #1 — stop `83139`, service `15` with `8 min, 15 min`. This proves Gradle + cargo-ndk + Slint. Inspect `/tmp/sgbr_gradle.png`.
@@ -229,12 +229,12 @@ Prove Rust can post a notification through a Kotlin helper. This is the mechanis
 
 ### Task B1: Kotlin notification helper
 
-**Files:** `android/app/src/main/kotlin/com/serpoul/sgbusready/NotificationHelper.kt`. Manifest: remove `android:hasCode="false"`, add `<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />`.
+**Files:** `android/app/src/main/kotlin/com/sgbusoready/NotificationHelper.kt`. Manifest: remove `android:hasCode="false"`, add `<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />`.
 
 - [ ] **Step 1: Helper with a JNI-friendly static method**
 
 ```kotlin
-package com.serpoul.sgbusready
+package com.sgbusoready
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -286,7 +286,7 @@ In `src/lib.rs` `android_main`, after `slint::android::init(app)`, obtain the `J
 // 4. let title = env.new_string("SG Bus Ready")?;
 //    let text  = env.new_string("Notification bridge OK")?;
 // 5. env.call_static_method(
-//        "com/serpoul/sgbusready/NotificationHelper", "showNow",
+//        "com/sgbusoready/NotificationHelper", "showNow",
 //        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
 //        &[(&activity).into(), (&title).into(), (&text).into()])?;
 ```
@@ -298,9 +298,9 @@ In `src/lib.rs` `android_main`, after `slint::android::init(app)`, obtain the `J
 source android/.env.build
 cargo ndk -t arm64-v8a -P 35 -o android/app/src/main/jniLibs build
 cd android && ./gradlew assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell monkey -p com.serpoul.sgbusready -c android.intent.category.LAUNCHER 1
+adb shell monkey -p com.sgbusoready -c android.intent.category.LAUNCHER 1
 ```
-Grant POST_NOTIFICATIONS if prompted (Android 13+: `adb shell pm grant com.serpoul.sgbusready android.permission.POST_NOTIFICATIONS`).
+Grant POST_NOTIFICATIONS if prompted (Android 13+: `adb shell pm grant com.sgbusoready android.permission.POST_NOTIFICATIONS`).
 **Gate:** an ongoing notification "SG Bus Ready / Notification bridge OK" appears.
 
 - [ ] **Step 4: Commit** the Kotlin helper + Rust JNI bridge + Cargo.toml/manifest changes.
@@ -315,7 +315,7 @@ The heart of the feature. The foreground service refreshes the ongoing notificat
 
 **Files:** new `src/android_bridge.rs` (compiled only on Android), `pub mod android_bridge;` guarded by `#[cfg(target_os="android")]` in `src/lib.rs`. AccountKey injected at build time via `env!("LTA_SDK_ACCOUNT_KEY")` (never committed).
 
-These are `#[no_mangle] extern "C"` JNI functions (named `Java_com_serpoul_sgbusready_<Class>_<method>`). All heavy logic delegates to the already-tested `sgbr-core`.
+These are `#[no_mangle] extern "C"` JNI functions (named `Java_com_sgbusoready_<Class>_<method>`). All heavy logic delegates to the already-tested `sgbr-core`.
 
 - [ ] **Step 1: Settings path + render function**
 
@@ -373,7 +373,7 @@ fn render_active(files_dir: &str, now: OffsetDateTime) -> String {
 ```rust
 /// Java: CommuteNative.renderActive(filesDir, epochSecs) -> String
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_renderActive(
+pub extern "C" fn Java_com_sgbusoready_CommuteNative_renderActive(
     mut env: JNIEnv,
     _class: JClass,
     files_dir: JString,
@@ -389,7 +389,7 @@ pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_renderActive(
 
 /// Java: CommuteNative.nextAlarmEpochMillis(filesDir, epochSecs) -> long (-1 = none)
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_nextAlarmEpochMillis(
+pub extern "C" fn Java_com_sgbusoready_CommuteNative_nextAlarmEpochMillis(
     mut env: JNIEnv,
     _class: JClass,
     files_dir: JString,
@@ -421,7 +421,7 @@ LTA_SDK_ACCOUNT_KEY (read from repo-root .env by android/.env.build) cargo ndk -
 - [ ] **Step 1: `CommuteNative.kt`** — the JNI declarations + lib load.
 
 ```kotlin
-package com.serpoul.sgbusready
+package com.sgbusoready
 
 object CommuteNative {
     init { System.loadLibrary("sgbusoready") }
@@ -433,7 +433,7 @@ object CommuteNative {
 - [ ] **Step 2: `CommuteService.kt`** — foreground service with a ~15s refresh loop.
 
 ```kotlin
-package com.serpoul.sgbusready
+package com.sgbusoready
 
 import android.app.Service
 import android.content.Context
@@ -494,7 +494,7 @@ class CommuteService : Service() {
 - [ ] **Step 3: `AlarmScheduler.kt`** — set an exact alarm at the next boundary.
 
 ```kotlin
-package com.serpoul.sgbusready
+package com.sgbusoready
 
 import android.app.AlarmManager
 import android.app.PendingIntent
@@ -520,7 +520,7 @@ object AlarmScheduler {
 - [ ] **Step 4: `AlarmReceiver.kt` + `BootReceiver.kt`**
 
 ```kotlin
-package com.serpoul.sgbusready
+package com.sgbusoready
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -573,13 +573,13 @@ cat > /tmp/commutes.json <<'JSON'
   "end": {"hour": <h2>, "minute": <m2>}, "label": null } ] }
 JSON
 adb push /tmp/commutes.json /data/local/tmp/commutes.json
-adb shell run-as com.serpoul.sgbusready cp /data/local/tmp/commutes.json files/commutes.json
+adb shell run-as com.sgbusoready cp /data/local/tmp/commutes.json files/commutes.json
 ```
 (`days` bitmask: bit0=Mon … bit6=Sun, e.g. Monday = 1.)
 
 - [ ] **Step 2:** Launch the app (arms the alarm), or trigger the receiver directly to start immediately:
 ```bash
-adb shell am broadcast -n com.serpoul.sgbusready/.AlarmReceiver
+adb shell am broadcast -n com.sgbusoready/.AlarmReceiver
 ```
 **Gate:** within the window, an ongoing notification shows `Bus <line> · N min · …`, refreshing ~every 15s; at the window `end` it disappears (service stops). Check `adb logcat` for the bridge if not.
 
@@ -602,7 +602,7 @@ Manage commutes in-app; persist with `CommuteStore::save`; re-arm the alarm on s
 - [ ] **Step 3:** Delete + reorder (move up/down) mutate `store.commutes` and re-save.
 
 - [ ] **Step 4: Build, install, verify.**
-**Gate:** add a commute in-app → it persists across relaunch (`adb shell run-as com.serpoul.sgbusready cat files/commutes.json`); an inactive commute shows "see you soon · next …"; saving a commute whose window is open shortly triggers the Live Update at the boundary.
+**Gate:** add a commute in-app → it persists across relaunch (`adb shell run-as com.sgbusoready cat files/commutes.json`); an inactive commute shows "see you soon · next …"; saving a commute whose window is open shortly triggers the Live Update at the boundary.
 
 - [ ] **Step 5: Commit** the settings UI.
 

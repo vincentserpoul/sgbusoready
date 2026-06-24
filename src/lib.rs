@@ -58,6 +58,8 @@ use sgbr_core::bus_catalog::store as catalog_store;
 use sgbr_core::commute::display::format_see_you_soon;
 use sgbr_core::commute::model::{Commute, TimeOfDay, Weekdays};
 use sgbr_core::commute::store::CommuteStore;
+use sgbr_core::lta::arrival::service_arrivals;
+use sgbr_core::lta::client::fetch_arrivals;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use time::macros::offset;
 use time::{OffsetDateTime, Weekday};
@@ -112,7 +114,7 @@ fn dp_to_length(dp: i32) -> f32 {
     reason = "Android JNI export; the sole unsafe surface per the platform-bridge exception"
 )]
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_onTimePicked(
+pub extern "C" fn Java_com_sgbusoready_CommuteNative_onTimePicked(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     tag: jni::objects::JString,
@@ -143,7 +145,7 @@ pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_onTimePicked(
     reason = "Android JNI export; the sole unsafe surface per the platform-bridge exception"
 )]
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_com_serpoul_sgbusready_CommuteNative_onBackPressed(
+pub extern "C" fn Java_com_sgbusoready_CommuteNative_onBackPressed(
     _env: jni::JNIEnv,
     _class: jni::objects::JClass,
 ) -> jni::sys::jboolean {
@@ -218,6 +220,7 @@ fn spawn_refresh_if_stale(catalog: &Catalog, window: &AppWindow, store_path: &Pa
                 // it to relabel rows with stop names now the catalog is available.
                 let store = CommuteStore::load(&commutes_path).unwrap_or_default();
                 with_catalog(&catalog, |cat| rebuild_rows(&w, &store, cat));
+                spawn_arrivals(&w, &store, &catalog);
                 refresh_search(&w, &catalog);
             }
         });
@@ -237,14 +240,43 @@ fn card_label(catalog: Option<&BusCatalog>, commute: &Commute) -> String {
     format!("Bus {} · {name}", commute.line)
 }
 
+fn see_you_soon(commute: &Commute, now: OffsetDateTime) -> String {
+    commute
+        .next_window_start(now)
+        .map(format_see_you_soon)
+        .unwrap_or_default()
+}
+
+/// Synchronous (no network) status used when first building rows; a background
+/// fetch later replaces an active row with live arrivals (see `spawn_arrivals`).
 fn card_status(commute: &Commute, now: OffsetDateTime) -> String {
     if commute.is_active_at(now) {
-        format!("active · until {:02}:{:02}", commute.end.hour, commute.end.minute)
+        "active now".to_owned()
     } else {
-        commute
-            .next_window_start(now)
-            .map(format_see_you_soon)
-            .unwrap_or_default()
+        see_you_soon(commute, now)
+    }
+}
+
+/// Live arrival minutes for `commute`'s line at its stop (blocking — off-UI only).
+fn active_minutes(commute: &Commute, now: OffsetDateTime) -> Vec<i64> {
+    match fetch_arrivals(ACCOUNT_KEY, &commute.stop) {
+        Ok(resp) => service_arrivals(&resp, now)
+            .into_iter()
+            .find(|s| s.service_no == commute.line)
+            .map(|s| s.minutes)
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn minutes_status(mins: &[i64]) -> String {
+    if mins.is_empty() {
+        "no buses".to_owned()
+    } else {
+        mins.iter()
+            .map(|m| if *m <= 0 { "due".to_owned() } else { format!("{m} min") })
+            .collect::<Vec<_>>()
+            .join(" · ")
     }
 }
 
@@ -260,6 +292,46 @@ fn rebuild_rows(window: &AppWindow, store: &CommuteStore, catalog: Option<&BusCa
         });
     }
     window.set_rows(ModelRc::new(VecModel::from(rows)));
+}
+
+/// For each active commute, fetch live arrivals on a background thread and
+/// replace the list rows with the live timings (no-op without a key / when none
+/// are active). Inactive rows keep their "see you soon" status.
+fn spawn_arrivals(window: &AppWindow, store: &CommuteStore, catalog: &Catalog) {
+    if ACCOUNT_KEY.is_empty() {
+        return;
+    }
+    let now = now_sgt();
+    if !store.commutes.iter().any(|c| c.is_active_at(now)) {
+        return;
+    }
+    let commutes = store.commutes.clone();
+    let catalog = Arc::clone(catalog);
+    let weak = window.as_weak();
+    std::thread::spawn(move || {
+        let now = now_sgt();
+        let mut rows: Vec<CommuteRow> = Vec::new();
+        for (i, c) in commutes.iter().enumerate() {
+            let label = with_catalog(&catalog, |cat| card_label(cat, c));
+            let active = c.is_active_at(now);
+            let status = if active {
+                minutes_status(&active_minutes(c, now))
+            } else {
+                see_you_soon(c, now)
+            };
+            rows.push(CommuteRow {
+                label: SharedString::from(label),
+                status: SharedString::from(status),
+                active,
+                index: i32::try_from(i).unwrap_or(-1),
+            });
+        }
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_rows(ModelRc::new(VecModel::from(rows)));
+            }
+        });
+    });
 }
 
 fn read_weekdays(window: &AppWindow) -> Weekdays {
@@ -394,6 +466,7 @@ fn handle_save(window: &AppWindow, store: &Store, catalog: &Catalog, path: &Path
         populate_form(window, None, -1, cat);
         rebuild_rows(window, &store.borrow(), cat);
     });
+    spawn_arrivals(window, &store.borrow(), catalog);
     window.set_screen(Screen::List);
 }
 
@@ -415,6 +488,7 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
         rebuild_rows(&window, &store.borrow(), cat);
         populate_form(&window, None, -1, cat);
     });
+    spawn_arrivals(&window, &store.borrow(), &catalog);
     window.set_catalog_loading(with_catalog(&catalog, |c| c.is_none()));
     spawn_refresh_if_stale(&catalog, &window, &store_path);
 
@@ -465,6 +539,7 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
             }
             drop(store);
             with_catalog(&c, |cat| rebuild_rows(&w, &s.borrow(), cat));
+            spawn_arrivals(&w, &s.borrow(), &c);
         }
     });
 

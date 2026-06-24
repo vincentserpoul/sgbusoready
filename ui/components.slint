@@ -189,7 +189,7 @@ export component TimeStepper inherits Rectangle {
     in property <int> hour;
     in property <int> minute;
     callback picked();
-    height: 74px;
+    height: 88px;
     border-radius: 12px;
     background: Palette.surface;
     border-width: 1px;
@@ -207,7 +207,7 @@ export component TimeStepper inherits Rectangle {
         }
         Text {
             text: (root.hour < 10 ? "0\{root.hour}" : "\{root.hour}") + ":" + (root.minute < 10 ? "0\{root.minute}" : "\{root.minute}");
-            font-size: 26px;
+            font-size: 32px;
             font-weight: 700;
             color: Palette.text;
             horizontal-alignment: center;
@@ -244,11 +244,11 @@ export component CommuteCard inherits Rectangle {
     in property <string> status;
     in property <bool> active;
     callback clicked();
-    height: 78px;
+    height: 96px;
     border-radius: 18px;
     background: root.active ? Palette.hero : Palette.surface;
     border-width: 1px;
-    border-color: root.active ? #332A4A : Palette.hairline;
+    border-color: root.active ? #3A1E1E : Palette.hairline;
     opacity: ta.pressed ? 0.9 : 1.0;
     animate opacity { duration: 100ms; easing: ease-out; }
     VerticalLayout {
@@ -264,12 +264,12 @@ export component CommuteCard inherits Rectangle {
                 overflow: elide;
             }
             if root.active: Rectangle {
-                background: #FFFFFF1A;
+                background: Palette.accent-solid;
                 border-radius: 11px;
                 HorizontalLayout {
                     padding-left: 9px;
                     padding-right: 9px;
-                    Text { vertical-alignment: center; text: "active now"; font-size: Type.label; color: #C9B8FF; }
+                    Text { vertical-alignment: center; text: "active now"; font-size: Type.label; font-weight: 600; color: Palette.on-accent; }
                 }
             }
         }
