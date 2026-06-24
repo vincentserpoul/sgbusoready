@@ -142,4 +142,31 @@ mod tests {
         let err = CommuteStore::load(&path).unwrap_err();
         assert!(matches!(err, crate::error::CoreError::Parse(_)));
     }
+
+    #[test]
+    fn multi_stop_commute_round_trips() {
+        let c = Commute::new(
+            Some("Morning to work".to_owned()),
+            Weekdays::from_days(&[Monday]),
+            TimeOfDay { hour: 8, minute: 0 },
+            TimeOfDay { hour: 9, minute: 0 },
+            vec![
+                CommuteStop {
+                    code: "83139".to_owned(),
+                    name: "Opp Blk 123".to_owned(),
+                    buses: vec!["14".to_owned(), "14e".to_owned()],
+                },
+                CommuteStop {
+                    code: "17009".to_owned(),
+                    name: "Bef Clementi Stn".to_owned(),
+                    buses: vec!["96".to_owned()],
+                },
+            ],
+        )
+        .expect("valid commute");
+        let store = CommuteStore { commutes: vec![c] };
+        let json = store.to_json().expect("serialize");
+        let back = CommuteStore::from_json(&json).expect("deserialize");
+        assert_eq!(store, back);
+    }
 }
