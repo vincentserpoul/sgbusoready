@@ -101,9 +101,9 @@ export component AppWindow inherits Window {
                     alignment: start;
                     for row in root.rows: Rectangle {
                         border-radius: 18px;
-                        background: row.active ? Palette.hero : Palette.surface;
+                        background: Palette.surface;
                         border-width: 1px;
-                        border-color: row.active ? Palette.accent-solid : Palette.hairline;
+                        border-color: row.active ? Palette.text-faint : Palette.hairline;
                         VerticalLayout {
                             padding: 14px;
                             spacing: 8px;
