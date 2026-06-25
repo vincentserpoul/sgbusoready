@@ -368,9 +368,18 @@ export component StopEditorCard inherits Rectangle {
                 }
             }
             Rectangle {
-                width: 32px;
-                Text { text: "✕"; font-size: 18px; color: Palette.text-dim; }
-                TouchArea { clicked => { root.remove(); } }
+                width: 34px;
+                height: 34px;
+                border-radius: 17px;
+                background: rmv.pressed ? Palette.accent-solid : Palette.chip-muted-bg;
+                animate background { duration: 90ms; easing: ease-out; }
+                Text {
+                    text: "×";
+                    font-size: 24px;
+                    font-weight: 700;
+                    color: rmv.pressed ? Palette.on-accent : Palette.text-dim;
+                }
+                rmv := TouchArea { clicked => { root.remove(); } }
             }
         }
         Flickable {

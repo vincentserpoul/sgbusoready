@@ -61,7 +61,7 @@ use sgbr_core::commute::model::{Commute, CommuteStop, TimeOfDay, Weekdays};
 use sgbr_core::commute::store::CommuteStore;
 use sgbr_core::lta::arrival::{StopArrivals, stop_arrivals, timeline_scale_max};
 use sgbr_core::lta::client::fetch_arrivals;
-use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use time::macros::offset;
 use time::{OffsetDateTime, Weekday};
 
@@ -764,14 +764,23 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
         if let Some(w) = w.upgrade()
             && let (Ok(si), Ok(bi)) = (usize::try_from(si), usize::try_from(bi))
         {
-            if let Some(sel) = fs
+            // Flip the working-state bool and capture the new value.
+            let toggled = fs
                 .borrow_mut()
                 .get_mut(si)
                 .and_then(|stop| stop.selected.get_mut(bi))
+                .map(|sel| {
+                    *sel = !*sel;
+                    *sel
+                });
+            // Update only the affected chip in the live model — rebuilding the
+            // whole `form-stops` model would recreate each StopEditorCard's
+            // Flickable and snap its chip row back to the start.
+            if let Some(value) = toggled
+                && let Some(stop) = w.get_form_stops().row_data(si)
             {
-                *sel = !*sel;
+                stop.selected.set_row_data(bi, value);
             }
-            push_form_stops(&w, &fs.borrow());
         }
     });
 
