@@ -59,7 +59,7 @@ use sgbr_core::bus_catalog::store as catalog_store;
 use sgbr_core::commute::display::format_see_you_soon;
 use sgbr_core::commute::model::{Commute, CommuteStop, TimeOfDay, Weekdays};
 use sgbr_core::commute::store::CommuteStore;
-use sgbr_core::lta::arrival::{StopArrivals, stop_arrivals, timeline_scale_max};
+use sgbr_core::lta::arrival::{StopArrivals, stop_arrivals};
 use sgbr_core::lta::client::fetch_arrivals;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use time::macros::offset;
@@ -322,7 +322,7 @@ fn rebuild_rows(window: &AppWindow, store: &CommuteStore) {
             } else {
                 empty_lanes()
             },
-            scale_max: 15,
+            scale_max: i32::from(c.scale_minutes),
         });
     }
     window.set_rows(ModelRc::new(VecModel::from(rows)));
@@ -340,7 +340,8 @@ struct RowData {
 }
 
 /// Fetch each stop's arrivals for one active commute (blocking; off-UI only) and
-/// the shared timeline scale. One `fetch_arrivals` per stop, filtered to buses.
+/// the commute's fixed timeline scale. One `fetch_arrivals` per stop, filtered to
+/// buses.
 fn commute_stop_arrivals(commute: &Commute, now: OffsetDateTime) -> (Vec<StopArrivals>, i32) {
     let mut all: Vec<StopArrivals> = Vec::new();
     for stop in &commute.stops {
@@ -354,8 +355,7 @@ fn commute_stop_arrivals(commute: &Commute, now: OffsetDateTime) -> (Vec<StopArr
         };
         all.push(arrivals);
     }
-    let scale = i32::try_from(timeline_scale_max(&all)).unwrap_or(15);
-    (all, scale)
+    (all, i32::from(commute.scale_minutes))
 }
 
 /// Build the Slint timeline lanes for a commute's stops (UI thread — makes `ModelRc`s).
@@ -501,6 +501,7 @@ fn populate_form(
         window.set_start_minute(i32::from(c.start.minute));
         window.set_end_hour(i32::from(c.end.hour));
         window.set_end_minute(i32::from(c.end.minute));
+        window.set_form_scale(i32::from(c.scale_minutes));
         for st in &c.stops {
             let mut services = stop_services(catalog, &st.code);
             // Keep tracked buses visible even if the catalog lacks them.
@@ -524,6 +525,7 @@ fn populate_form(
         window.set_start_minute(0);
         window.set_end_hour(9);
         window.set_end_minute(0);
+        window.set_form_scale(i32::from(Commute::DEFAULT_SCALE_MINUTES));
     }
     form_stops.borrow_mut().clone_from(&stops);
     push_form_stops(window, &stops);
@@ -596,8 +598,9 @@ fn handle_save(window: &AppWindow, store: &Store, path: &Path, form_stops: &Form
         })
         .collect();
 
+    let scale = u16::try_from(window.get_form_scale()).unwrap_or(Commute::DEFAULT_SCALE_MINUTES);
     let commute = match Commute::new(label, days, start, end, stops) {
-        Ok(c) => c,
+        Ok(c) => c.with_scale_minutes(scale),
         Err(e) => {
             window.set_error_text(SharedString::from(e.to_string()));
             return;

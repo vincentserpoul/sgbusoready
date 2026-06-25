@@ -317,7 +317,9 @@ export component TimelineLane inherits Rectangle {
                 background: Palette.text-faint;
             }
             for tag in root.tags: Rectangle {
-                property <length> cx: root.cx-of(tag.minutes);
+                // Clamp position to the fixed range; the label still shows the
+                // real minutes, so a far bus parks at the right edge.
+                property <length> cx: root.cx-of(min(tag.minutes, root.scale-max));
                 // leader (white)
                 Rectangle {
                     x: parent.cx - 1px;

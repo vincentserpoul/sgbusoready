@@ -50,6 +50,7 @@ export component AppWindow inherits Window {
     in-out property <int> start-minute: 0;
     in-out property <int> end-hour: 9;
     in-out property <int> end-minute: 0;
+    in-out property <int> form-scale: 15;
     in-out property <string> error-text;
 
     // Stop-search state.
@@ -224,6 +225,16 @@ export component AppWindow inherits Window {
                             minute: root.end-minute;
                             picked => { root.pick-time("end"); }
                         }
+                    }
+
+                    Text { text: "Timeline range"; font-size: Type.label; color: Palette.text-faint; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Chip { text: "15m"; selected: root.form-scale == 15; toggled => { root.form-scale = 15; } }
+                        Chip { text: "30m"; selected: root.form-scale == 30; toggled => { root.form-scale = 30; } }
+                        Chip { text: "45m"; selected: root.form-scale == 45; toggled => { root.form-scale = 45; } }
+                        Chip { text: "60m"; selected: root.form-scale == 60; toggled => { root.form-scale = 60; } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
 
                     Text { text: "Stops & buses"; font-size: Type.label; color: Palette.text-faint; }
