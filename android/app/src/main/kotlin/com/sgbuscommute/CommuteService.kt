@@ -64,11 +64,15 @@ class CommuteService : Service() {
             .setShortCriticalText(chipText(text))
             .build()
 
-    /** Compact status-bar chip, e.g. line "Opp Blk 123: 2m (14), 4m (14e)" -> "2m (14)". */
+    /**
+     * Compact status-bar chip. The body is two lines per stop (name, then
+     * arrivals), so the soonest arrival is the first segment of the 2nd line,
+     * e.g. "Opp Blk 123\n2m (14), 4m (14e)" -> "2m (14)".
+     */
     private fun chipText(body: String): String {
-        val firstLine = body.substringBefore('\n')
-        val afterColon = firstLine.substringAfter(": ", "")
-        return afterColon.substringBefore(", ").ifEmpty { firstLine }
+        val lines = body.split('\n')
+        val arrivals = lines.getOrNull(1).orEmpty()
+        return arrivals.substringBefore(", ").ifEmpty { lines.firstOrNull().orEmpty() }
     }
 
     private fun startForegroundCompat(notif: Notification) {

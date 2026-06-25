@@ -16,31 +16,33 @@ pub fn format_see_you_soon(next_start: OffsetDateTime) -> String {
     format!("see you soon · next {when}")
 }
 
-/// Build the Live Update line for one stop, time-first with buses bracketed:
-/// `"Opp Blk 123: 2m (14), 4m (14e·16), 11m (154)"`. A `minutes` value of `0`
-/// or below renders as `"due"`. An empty stop renders `"<name>: no buses"`.
+/// Build the two-line Live Update block for one stop: the stop name on the first
+/// line, then its arrivals time-first with buses bracketed on the second, e.g.
+/// `"Opp Blk 123\n2m (14), 4m (14e·16), 11m (154)"`. A `minutes` value of `0` or
+/// below renders as `"due"`. An empty stop's second line is `"no buses"`.
 #[must_use]
 pub fn format_stop_line(stop: &StopArrivals) -> String {
-    if stop.items.is_empty() {
-        return format!("{}: no buses", stop.name);
-    }
-    let parts: Vec<String> = stop
-        .items
-        .iter()
-        .map(|item| {
-            let when = if item.minutes <= 0 {
-                "due".to_owned()
-            } else {
-                format!("{}m", item.minutes)
-            };
-            format!("{when} ({})", item.buses.join("·"))
-        })
-        .collect();
-    format!("{}: {}", stop.name, parts.join(", "))
+    let arrivals = if stop.items.is_empty() {
+        "no buses".to_owned()
+    } else {
+        stop.items
+            .iter()
+            .map(|item| {
+                let when = if item.minutes <= 0 {
+                    "due".to_owned()
+                } else {
+                    format!("{}m", item.minutes)
+                };
+                format!("{when} ({})", item.buses.join("·"))
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!("{}\n{arrivals}", stop.name)
 }
 
-/// Build the full Live Update body for the active commute(s): one
-/// [`format_stop_line`] per stop, newline-separated.
+/// Build the full Live Update body for the active commute(s): one two-line
+/// [`format_stop_line`] block per stop, newline-separated.
 #[must_use]
 pub fn format_active_notification(stops: &[StopArrivals]) -> String {
     stops
@@ -96,7 +98,7 @@ mod tests {
         };
         assert_eq!(
             format_stop_line(&stop),
-            "Opp Blk 123: 2m (14), 4m (14e·16), 11m (154)"
+            "Opp Blk 123\n2m (14), 4m (14e·16), 11m (154)"
         );
     }
 
@@ -110,7 +112,7 @@ mod tests {
                 buses: vec!["14".to_owned()],
             }],
         };
-        assert_eq!(format_stop_line(&stop), "Opp Blk 123: due (14)");
+        assert_eq!(format_stop_line(&stop), "Opp Blk 123\ndue (14)");
     }
 
     #[test]
@@ -120,7 +122,7 @@ mod tests {
             name: "Opp Blk 123".to_owned(),
             items: vec![],
         };
-        assert_eq!(format_stop_line(&stop), "Opp Blk 123: no buses");
+        assert_eq!(format_stop_line(&stop), "Opp Blk 123\nno buses");
     }
 
     #[test]
@@ -143,7 +145,7 @@ mod tests {
         };
         assert_eq!(
             format_active_notification(&[a, b]),
-            "Opp Blk 123: 2m (14)\nBef Clementi Stn: 8m (96)"
+            "Opp Blk 123\n2m (14)\nBef Clementi Stn\n8m (96)"
         );
     }
 }

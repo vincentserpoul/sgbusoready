@@ -260,14 +260,15 @@ export component TimelineLane inherits Rectangle {
     in property <string> name;
     in property <[ArrivalTag]> tags;
     in property <int> scale-max: 15;
-    height: 74px;
-    property <length> pad-l: 6px;
-    property <length> usable: self.width - root.pad-l - 12px;
+    height: 102px;
+    property <length> pad-l: 10px;
+    property <length> usable: self.width - root.pad-l - 16px;
     VerticalLayout {
-        spacing: 2px;
+        spacing: 4px;
         Text {
             text: root.name;
-            font-size: Type.label;
+            font-size: Type.caption;
+            font-weight: 600;
             color: Palette.text-dim;
             overflow: elide;
         }
@@ -276,55 +277,56 @@ export component TimelineLane inherits Rectangle {
             // baseline
             Rectangle {
                 x: root.pad-l;
-                y: parent.height - 22px;
+                y: parent.height - 30px;
                 width: root.usable;
                 height: 2px;
                 background: Palette.hairline;
             }
             // now dot
             Rectangle {
-                x: root.pad-l - 4px;
-                y: parent.height - 26px;
-                width: 9px;
-                height: 9px;
-                border-radius: 5px;
+                x: root.pad-l - 6px;
+                y: parent.height - 36px;
+                width: 13px;
+                height: 13px;
+                border-radius: 7px;
                 background: Palette.accent-solid;
             }
             for tag in root.tags: Rectangle {
-                property <length> cx: root.pad-l + root.usable * (tag.minutes / max(root.scale-max, 1));
+                // `* 1.0` forces a float numerator: an int/int divide would
+                // truncate to 0 and stack every pill at the left of the lane.
+                property <length> cx: root.pad-l + root.usable * (tag.minutes * 1.0 / max(root.scale-max, 1));
                 // leader
                 Rectangle {
                     x: parent.cx - 1px;
-                    y: 22px;
+                    y: 32px;
                     width: 2px;
-                    height: parent.height - 44px;
+                    height: parent.height - 62px;
                     background: Palette.hairline;
                 }
-                // bus pill above the line
+                // bus pill above the line — width hugs its label so each tag
+                // reads as a separate chip (no width => fills the lane).
                 pill := Rectangle {
                     x: parent.cx - self.width / 2;
-                    y: 2px;
-                    height: 22px;
-                    border-radius: 8px;
+                    y: 0px;
+                    width: plabel.preferred-width + 18px;
+                    height: 30px;
+                    border-radius: 10px;
                     background: Palette.accent-solid;
-                    HorizontalLayout {
-                        padding-left: 7px;
-                        padding-right: 7px;
-                        Text {
-                            vertical-alignment: center;
-                            text: tag.buses;
-                            font-size: Type.label;
-                            font-weight: 700;
-                            color: Palette.on-accent;
-                        }
+                    plabel := Text {
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        text: tag.buses;
+                        font-size: Type.body;
+                        font-weight: 700;
+                        color: Palette.on-accent;
                     }
                 }
                 // red minute below the line
                 Text {
                     x: parent.cx - self.width / 2;
-                    y: parent.height - 18px;
+                    y: parent.height - 24px;
                     text: tag.minutes <= 0 ? "due" : "\{tag.minutes}";
-                    font-size: Type.label;
+                    font-size: Type.caption;
                     font-weight: 700;
                     color: Palette.accent-solid;
                 }
