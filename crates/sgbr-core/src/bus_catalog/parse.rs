@@ -24,11 +24,16 @@ struct RawStop {
 
 /// Parse one `BusStops` page into [`BusStop`]s.
 pub fn parse_stops_page(json: &str) -> Result<Vec<BusStop>, CoreError> {
-    let page: StopsPage = serde_json::from_str(json).map_err(|e| CoreError::Parse(e.to_string()))?;
+    let page: StopsPage =
+        serde_json::from_str(json).map_err(|e| CoreError::Parse(e.to_string()))?;
     Ok(page
         .value
         .into_iter()
-        .map(|r| BusStop { code: r.code, name: r.name, road: r.road })
+        .map(|r| BusStop {
+            code: r.code,
+            name: r.name,
+            road: r.road,
+        })
         .collect())
 }
 
@@ -47,8 +52,13 @@ struct RawRoute {
 
 /// Parse one `BusRoutes` page into `(stop_code, service_no)` pairs.
 pub fn parse_routes_page(json: &str) -> Result<Vec<(String, String)>, CoreError> {
-    let page: RoutesPage = serde_json::from_str(json).map_err(|e| CoreError::Parse(e.to_string()))?;
-    Ok(page.value.into_iter().map(|r| (r.stop, r.service)).collect())
+    let page: RoutesPage =
+        serde_json::from_str(json).map_err(|e| CoreError::Parse(e.to_string()))?;
+    Ok(page
+        .value
+        .into_iter()
+        .map(|r| (r.stop, r.service))
+        .collect())
 }
 
 /// Sort key for a service number: leading digits as a number, then the whole
@@ -83,7 +93,10 @@ mod tests {
         ]}"#;
         let stops = parse_stops_page(json).expect("parse stops");
         assert_eq!(stops.len(), 1);
-        assert_eq!(stops.first().map(|s| s.name.as_str()), Some("Hotel Grand Pacific"));
+        assert_eq!(
+            stops.first().map(|s| s.name.as_str()),
+            Some("Hotel Grand Pacific")
+        );
         assert_eq!(stops.first().map(|s| s.road.as_str()), Some("Victoria St"));
     }
 
@@ -94,12 +107,23 @@ mod tests {
             {"ServiceNo":"52","BusStopCode":"83139","Direction":1,"StopSequence":9}
         ]}"#;
         let pairs = parse_routes_page(json).expect("parse routes");
-        assert_eq!(pairs, vec![("83139".to_owned(), "15".to_owned()), ("83139".to_owned(), "52".to_owned())]);
+        assert_eq!(
+            pairs,
+            vec![
+                ("83139".to_owned(), "15".to_owned()),
+                ("83139".to_owned(), "52".to_owned())
+            ]
+        );
     }
 
     #[test]
     fn service_sort_is_numeric_aware() {
-        let mut v = vec!["151".to_owned(), "2".to_owned(), "15".to_owned(), "151A".to_owned()];
+        let mut v = vec![
+            "151".to_owned(),
+            "2".to_owned(),
+            "15".to_owned(),
+            "151A".to_owned(),
+        ];
         v.sort_by_key(|s| service_sort_key(s));
         assert_eq!(v, vec!["2", "15", "151", "151A"]);
     }
@@ -119,6 +143,9 @@ mod tests {
             ("83139".to_owned(), "15".to_owned()),
         ];
         let map = build_services_by_stop(pairs);
-        assert_eq!(map.get("83139"), Some(&vec!["15".to_owned(), "52".to_owned()]));
+        assert_eq!(
+            map.get("83139"),
+            Some(&vec!["15".to_owned(), "52".to_owned()])
+        );
     }
 }

@@ -33,7 +33,11 @@ pub fn search<'a>(catalog: &'a BusCatalog, query: &str, limit: usize) -> Vec<&'a
         }
     }
     scored.sort_by_key(|b| std::cmp::Reverse(b.0));
-    scored.into_iter().take(limit).map(|(_, stop)| stop).collect()
+    scored
+        .into_iter()
+        .take(limit)
+        .map(|(_, stop)| stop)
+        .collect()
 }
 
 #[cfg(test)]
@@ -42,7 +46,11 @@ mod tests {
     use crate::bus_catalog::model::{BusCatalog, BusStop};
 
     fn stop(code: &str, name: &str) -> BusStop {
-        BusStop { code: code.to_owned(), name: name.to_owned(), road: String::new() }
+        BusStop {
+            code: code.to_owned(),
+            name: name.to_owned(),
+            road: String::new(),
+        }
     }
 
     fn catalog() -> BusCatalog {

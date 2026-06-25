@@ -14,8 +14,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 ///
 /// The older `BusArrivalv2` path now 404s at the `DataMall` gateway; v3 is the
 /// current endpoint (same `BusStopCode` query param and response shape).
-pub const BUS_ARRIVAL_URL: &str =
-    "https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival";
+pub const BUS_ARRIVAL_URL: &str = "https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival";
 
 /// Build the full request URL for a given stop code.
 #[must_use]

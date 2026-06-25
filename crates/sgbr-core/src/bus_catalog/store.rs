@@ -42,7 +42,11 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert("83139".to_owned(), vec!["15".to_owned()]);
         let catalog = BusCatalog {
-            stops: vec![BusStop { code: "83139".to_owned(), name: "Clementi".to_owned(), road: "Ave 2".to_owned() }],
+            stops: vec![BusStop {
+                code: "83139".to_owned(),
+                name: "Clementi".to_owned(),
+                road: "Ave 2".to_owned(),
+            }],
             services_by_stop: map,
             fetched_at_unix: 42,
         };

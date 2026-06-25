@@ -69,7 +69,10 @@ mod tests {
     #[test]
     fn stop_and_services_lookup() {
         let c = sample();
-        assert_eq!(c.stop("83139").map(|s| s.name.as_str()), Some("Clementi Ave 2 Blk 333"));
+        assert_eq!(
+            c.stop("83139").map(|s| s.name.as_str()),
+            Some("Clementi Ave 2 Blk 333")
+        );
         assert!(c.stop("00000").is_none());
         assert_eq!(c.services("83139"), &["15".to_owned(), "52".to_owned()]);
         assert!(c.services("00000").is_empty());
@@ -78,8 +81,10 @@ mod tests {
     #[test]
     fn staleness_uses_ttl() {
         let c = sample();
-        let fresh = OffsetDateTime::from_unix_timestamp(1_000_000 + CATALOG_TTL_SECS).unwrap_or(OffsetDateTime::UNIX_EPOCH);
-        let old = OffsetDateTime::from_unix_timestamp(1_000_000 + CATALOG_TTL_SECS + 1).unwrap_or(OffsetDateTime::UNIX_EPOCH);
+        let fresh = OffsetDateTime::from_unix_timestamp(1_000_000 + CATALOG_TTL_SECS)
+            .unwrap_or(OffsetDateTime::UNIX_EPOCH);
+        let old = OffsetDateTime::from_unix_timestamp(1_000_000 + CATALOG_TTL_SECS + 1)
+            .unwrap_or(OffsetDateTime::UNIX_EPOCH);
         assert!(!c.is_stale(fresh));
         assert!(c.is_stale(old));
     }

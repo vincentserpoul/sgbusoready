@@ -61,7 +61,11 @@ fn fetch_all<T>(
 /// Returns [`CoreError::Http`]/[`CoreError::Parse`] on any page failure (partial
 /// data is discarded — the caller keeps its existing cache).
 pub fn fetch_catalog(account_key: &str, now: OffsetDateTime) -> Result<BusCatalog, CoreError> {
-    let agent = Agent::new_with_config(Agent::config_builder().timeout_global(Some(REQUEST_TIMEOUT)).build());
+    let agent = Agent::new_with_config(
+        Agent::config_builder()
+            .timeout_global(Some(REQUEST_TIMEOUT))
+            .build(),
+    );
     let stops = fetch_all(&agent, account_key, BUS_STOPS_URL, parse_stops_page)?;
     let pairs = fetch_all(&agent, account_key, BUS_ROUTES_URL, parse_routes_page)?;
     Ok(BusCatalog {
@@ -73,7 +77,7 @@ pub fn fetch_catalog(account_key: &str, now: OffsetDateTime) -> Result<BusCatalo
 
 #[cfg(test)]
 mod tests {
-    use super::{page_url, BUS_STOPS_URL};
+    use super::{BUS_STOPS_URL, page_url};
 
     #[test]
     fn builds_skip_url() {
