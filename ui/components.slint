@@ -275,8 +275,8 @@ export component TimelineLane inherits Rectangle {
     in property <string> end-label;
     // Stagger rows needed (>= 1); each extra row makes the lane taller.
     in property <int> row-count: 1;
-    // 98px fits a single row; each extra stagger row adds 40px.
-    height: 98px + (max(root.row-count, 1) - 1) * 40px;
+    // 108px fits a single row (time tag + bus pill); each stagger row adds 50px.
+    height: 108px + (max(root.row-count, 1) - 1) * 50px;
     // Geometry is relative to the graph element (the clock labels flank it).
     property <length> pad-l: 4px;
     property <length> usable: graph.width - root.pad-l * 2;
@@ -348,8 +348,8 @@ export component TimelineLane inherits Rectangle {
                     // Clamp position to the fixed range; the label still shows the
                     // real minutes, so a far bus parks at the right edge.
                     property <length> cx: root.cx-of(min(tag.minutes, root.scale-max));
-                    // Stagger upward by row so close pills don't overlap.
-                    property <length> pill-bottom: graph.base-y - 8px - tag.row * 40px;
+                    // Stagger upward by row so close markers don't overlap.
+                    property <length> pill-bottom: graph.base-y - 8px - tag.row * 50px;
                     // leader from the pill down to the baseline
                     Rectangle {
                         x: parent.cx - 1px;
@@ -367,14 +367,22 @@ export component TimelineLane inherits Rectangle {
                         border-radius: 6px;
                         background: Palette.accent-solid;
                     }
-                    // red arrival timing just above the pill, suffixed "m"
-                    Text {
+                    // time-left tag (white chip, black text) above the bus pill
+                    Rectangle {
                         x: parent.cx - self.width / 2;
-                        y: parent.pill-bottom - 24px - 15px;
-                        text: tag.minutes <= 0 ? "due" : "\{tag.minutes}m";
-                        font-size: Type.label;
-                        font-weight: 700;
-                        color: Palette.accent-solid;
+                        y: parent.pill-bottom - 24px - 8px - 18px;
+                        width: tlabel.preferred-width + 12px;
+                        height: 18px;
+                        border-radius: 7px;
+                        background: white;
+                        tlabel := Text {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            text: tag.minutes <= 0 ? "due" : "\{tag.minutes}m";
+                            font-size: Type.label;
+                            font-weight: 700;
+                            color: black;
+                        }
                     }
                     // bus pill — width hugs its label so each tag reads as a chip.
                     pill := Rectangle {
