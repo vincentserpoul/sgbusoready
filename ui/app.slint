@@ -39,9 +39,8 @@ export component AppWindow inherits Window {
     // Top status-bar inset (the app draws edge-to-edge on Android).
     in property <length> top-inset: 0px;
 
-    // Hero header (current time + at-a-glance status), refreshed each poll.
-    in property <string> hero-time;
-    in property <string> hero-day;
+    // Hero status banner (relative status, refreshed each poll). No absolute
+    // clock — that would duplicate and drift from the OS status-bar clock.
     in property <string> hero-status;
     // Weekday pill letters (Mon..Sun) for inactive commute cards.
     property <[string]> day-letters: ["M", "T", "W", "T", "F", "S", "S"];
@@ -99,47 +98,32 @@ export component AppWindow inherits Window {
             padding-bottom: 16px;
             padding-top: root.top-inset + 16px;
             spacing: 12px;
-            // Hero: large clock + weekday, with an at-a-glance status line.
-            Rectangle {
-                border-radius: 18px;
-                background: @linear-gradient(135deg, Palette.surface, Palette.bg);
-                border-width: 1px;
-                border-color: Palette.hairline;
-                drop-shadow-color: #00000055;
-                drop-shadow-blur: 16px;
-                drop-shadow-offset-y: 4px;
-                VerticalLayout {
-                    padding: 16px;
-                    spacing: 2px;
-                    HorizontalLayout {
-                        Text {
-                            text: root.hero-time;
-                            font-size: 40px;
-                            font-weight: 800;
-                            color: Palette.text;
-                        }
-                        Rectangle { horizontal-stretch: 1; }
-                        Text {
-                            text: root.hero-day;
-                            font-size: Type.body;
-                            font-weight: 600;
-                            color: Palette.text-dim;
-                            vertical-alignment: bottom;
-                        }
-                    }
-                    Text {
-                        text: root.hero-status;
-                        font-size: Type.caption;
-                        color: Palette.text-dim;
-                        overflow: elide;
-                    }
-                }
-            }
             Text {
                 text: "Commutes";
                 font-size: Type.title;
                 font-weight: 800;
                 color: Palette.text;
+            }
+            // At-a-glance status banner (relative — Live now / Next … / idle).
+            Rectangle {
+                border-radius: 14px;
+                background: @linear-gradient(135deg, Palette.surface, Palette.bg);
+                border-width: 1px;
+                border-color: Palette.hairline;
+                drop-shadow-color: #00000033;
+                drop-shadow-blur: 12px;
+                drop-shadow-offset-y: 3px;
+                HorizontalLayout {
+                    padding: 14px;
+                    Text {
+                        text: root.hero-status;
+                        font-size: Type.body;
+                        font-weight: 600;
+                        color: Palette.text;
+                        overflow: elide;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
             }
             ScrollView {
                 vertical-stretch: 1;
