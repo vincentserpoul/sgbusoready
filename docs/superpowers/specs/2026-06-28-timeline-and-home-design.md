@@ -1,12 +1,27 @@
 # Design — Rolling timeline, clock labels & home redesign
 
 Date: 2026-06-28
-Status: Approved (pending spec review)
+Status: Approved
+
+## Execution order
+
+Section numbers below are stable IDs, **not** the build order. Work proceeds in
+this sequence:
+
+1. **§0 Dependency upgrade** — first.
+2. **§5 Whole-codebase Rust refactor** — second, on the freshly upgraded baseline.
+3. **§1–§4 UX improvements** (rolling timeline, end labels, poll refresh, home
+   redesign) — later, in a subsequent session, building on clean upgraded code.
 
 ## Summary
 
-Four UX improvements to SG Bus Ready plus a whole-codebase Rust quality pass:
+Four UX improvements to SG Bus Ready, bracketed by a dependency-upgrade phase
+(first) and a whole-codebase Rust quality pass (last):
 
+0. **Dependency upgrade** — bump every dependency to its latest version, headlined
+   by Slint 1.15 → 1.17, including the Rust toolchain (MSRV 1.92) and the Fluent
+   default-style migration. Done first so later work builds on the new baseline and
+   can adopt new Slint capabilities.
 1. **Derived rolling timeline** — drop the per-commute timeline-range setting; the
    axis length is the commute window duration (`end − start`), and the axis slides
    with real time as `[now, now + duration]`.
@@ -15,13 +30,51 @@ Four UX improvements to SG Bus Ready plus a whole-codebase Rust quality pass:
 3. **Refresh labels on every poll** — recompute the end labels and the "now"
    marker on the existing 15 s arrivals tick.
 4. **Home redesign** — a status hero header, a friendlier empty state, and richer
-   inactive commute cards.
+   inactive commute cards, adopting new Slint 1.16/1.17 styling features.
 5. **Whole-codebase Rust refactor** — bring the entire workspace up to the strict
    quality bar (`.claude/skills/rust.md` + the youtun4 lint config), done last so
    the final code shape is what gets cleaned.
 
 Architecture principle throughout: pure logic and string/format computation live
 in `sgbr-core`; wiring lives in `src/lib.rs`; `.slint` files stay presentational.
+
+---
+
+## 0. Dependency upgrade (first phase)
+
+Update **all** dependencies to their latest compatible versions across the
+workspace (`Cargo.toml` + per-crate manifests), then re-lock and verify the build.
+
+### Slint 1.15 → 1.17 (headline)
+- Bump `slint` (and `slint-build` / any Slint dev-deps) to 1.17.x; confirm the
+  `backend-android-activity-06` feature name is still valid (rename if the crate
+  moved it).
+- **Toolchain:** Slint 1.17 requires Rust ≥ 1.92 — bump the pinned
+  `rust-toolchain.toml` and confirm CI/clippy/deny still pass on it.
+- **Fluent is now the default style on all platforms** (since 1.16). Audit the app
+  visually; if the prior implicit style differed, set the intended style explicitly
+  so the look is stable before the redesign work.
+- WGPU 29 / Fontique-Parley 0.10 are pulled transitively — just confirm the build
+  and on-device render are clean.
+
+### New Slint capabilities to adopt later
+These land here as available; they are *used* by task 4 (see that section):
+`Rectangle::drop-shadow-spread` + `inner-shadow-*` (1.17), positioned
+`@radial-gradient`/`@conic-gradient ... at` (1.17), `Path::fit` and `data:`
+`@image-url()` (1.16), `FontWeight` constants (1.16), `animate { enabled }` (1.17),
+`Tooltip` (1.17, optional), `Window::take_snapshot()` (1.16, useful for verification).
+Free fix: the 1.17 Android IME keyboard fix.
+
+### Other dependencies
+- Bump everything else (`time`, `serde`, `serde_json`, `thiserror`, `reqwest`/HTTP
+  client, JNI/Android bridge crates, etc.) to latest; resolve any API breaks.
+- Keep the strict lint config (`deny.toml`, `clippy.toml`, `.taplo.toml`,
+  `_typos.toml`) in force; address any new advisories `cargo deny` surfaces.
+- Gate: `cargo build` (desktop + Android), `cargo clippy`, `cargo test`, and
+  `cargo deny check` all clean before moving on.
+
+Behaviour-preserving except where the Fluent default visibly changes styling, which
+is reconciled here.
 
 ---
 
@@ -106,6 +159,11 @@ minute resolution.
 
 ## 4. Home redesign (`ui/app.slint` list screen + `src/lib.rs` + `sgbr-core`)
 
+Adopts Slint 1.16/1.17 styling features pulled in by phase 0: `drop-shadow-spread` /
+`inner-shadow-*` for card and hero depth, positioned `@radial-gradient` for the
+hero background, `FontWeight` constants for typography, `animate { enabled }` for the
+live-badge pulse, and `Path::fit` / `data:` `@image-url()` for the empty-state glyph.
+
 ### 4a. Status hero header
 A header band at the top of the list screen showing:
 - **Large current time** + **weekday** (e.g. `09:35` / `Sat`).
@@ -137,10 +195,11 @@ labels reuse existing weekday short-name formatting where possible.
 
 ---
 
-## 5. Whole-codebase Rust refactor (final phase)
+## 5. Whole-codebase Rust refactor (second phase, before UX work)
 
-Run **after** features 1–4 land, so the refactor cleans the final shape rather than
-soon-to-be-rewritten code. Apply `.claude/skills/rust.md` and the youtun4 strict
+Run **after the dependency upgrade (§0) and before the UX improvements**, so the
+codebase is clean on the new baseline and the feature work builds on it. Apply
+`.claude/skills/rust.md` and the youtun4 strict
 bar across `crates/sgbr-core`, `src/`, and the platform bridges:
 
 - Clean clippy: `all = deny`; `pedantic/cargo/...` warnings resolved; **no**
@@ -169,7 +228,10 @@ Behaviour-preserving only — no functional changes in this phase.
 - **Manual / visual:** run the app (desktop and on the connected Android phone),
   confirm the rolling axis labels advance across polls, the hero status reflects
   active vs upcoming vs none, the empty state and inactive cards render correctly.
-- **Quality gates** green after phase 5 (`fmt --check`, `clippy`, `test`).
+- **Build matrix** after phase 0: desktop + Android both build and render; the
+  Fluent-default styling change is reviewed on-device.
+- **Quality gates** green after phase 5 (`fmt --check`, `clippy`, `test`,
+  `deny check`).
 
 ## Out of scope
 
