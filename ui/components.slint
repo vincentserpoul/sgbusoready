@@ -349,13 +349,13 @@ export component TimelineLane inherits Rectangle {
                     // real minutes, so a far bus parks at the right edge.
                     property <length> cx: root.cx-of(min(tag.minutes, root.scale-max));
                     // Stagger upward by row so close markers don't overlap.
-                    property <length> pill-bottom: graph.base-y - 8px - tag.row * 50px;
-                    // leader from the pill down to the baseline
+                    property <length> marker-bottom: graph.base-y - 8px - tag.row * 50px;
+                    // leader from the capsule down to the baseline
                     Rectangle {
                         x: parent.cx - 1px;
-                        y: parent.pill-bottom;
+                        y: parent.marker-bottom;
                         width: 2px;
-                        height: graph.base-y - parent.pill-bottom;
+                        height: graph.base-y - parent.marker-bottom;
                         background: Palette.text-faint;
                     }
                     // red dot on the baseline at the exact minute
@@ -367,38 +367,40 @@ export component TimelineLane inherits Rectangle {
                         border-radius: 6px;
                         background: Palette.accent-solid;
                     }
-                    // time-left tag (white chip, black text) above the bus pill
-                    Rectangle {
+                    // one capsule: red bus number on top, white time below.
+                    capsule := Rectangle {
                         x: parent.cx - self.width / 2;
-                        y: parent.pill-bottom - 24px - 8px - 18px;
-                        width: tlabel.preferred-width + 12px;
-                        height: 18px;
-                        border-radius: 7px;
-                        background: white;
-                        tlabel := Text {
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            text: tag.minutes <= 0 ? "due" : "\{tag.minutes}m";
-                            font-size: Type.label;
-                            font-weight: 700;
-                            color: black;
-                        }
-                    }
-                    // bus pill — width hugs its label so each tag reads as a chip.
-                    pill := Rectangle {
-                        x: parent.cx - self.width / 2;
-                        y: parent.pill-bottom - 24px;
-                        width: plabel.preferred-width + 16px;
-                        height: 24px;
-                        border-radius: 9px;
-                        background: Palette.accent-solid;
-                        plabel := Text {
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            text: tag.buses;
-                            font-size: Type.body;
-                            font-weight: 700;
-                            color: Palette.on-accent;
+                        y: parent.marker-bottom - self.height;
+                        width: max(busl.preferred-width, timel.preferred-width) + 16px;
+                        height: 44px;
+                        border-radius: 10px;
+                        clip: true;
+                        VerticalLayout {
+                            spacing: 0px;
+                            Rectangle {
+                                height: 26px;
+                                background: Palette.accent-solid;
+                                busl := Text {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    text: tag.buses;
+                                    font-size: Type.body;
+                                    font-weight: 700;
+                                    color: Palette.on-accent;
+                                }
+                            }
+                            Rectangle {
+                                height: 18px;
+                                background: white;
+                                timel := Text {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    text: tag.minutes <= 0 ? "due" : "\{tag.minutes}m";
+                                    font-size: Type.label;
+                                    font-weight: 700;
+                                    color: black;
+                                }
+                            }
                         }
                     }
                 }
