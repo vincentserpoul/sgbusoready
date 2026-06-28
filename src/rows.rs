@@ -61,7 +61,7 @@ fn skeleton_lanes(commute: &Commute, now: OffsetDateTime) -> ModelRc<StopLane> {
         })
         .collect();
     let (start, end) = format_timeline_labels(now, commute.scale_minutes());
-    lanes_model(&stops, &start, &end)
+    lanes_model(&stops, i32::from(commute.scale_minutes()), &start, &end)
 }
 
 /// Build all list rows synchronously (no network): active rows get skeleton lanes
@@ -126,24 +126,81 @@ fn commute_stop_arrivals(commute: &Commute, now: OffsetDateTime) -> (Vec<StopArr
     (all, i32::from(commute.scale_minutes()))
 }
 
-/// Build the Slint timeline lanes for a commute's stops (UI thread — makes `ModelRc`s).
-fn lanes_model(stops: &[StopArrivals], start_label: &str, end_label: &str) -> ModelRc<StopLane> {
+/// Assign each arrival a stagger row so pills that would overlap horizontally are
+/// stacked on separate rows. Pill width is approximated as ~18% of the axis, so
+/// arrivals closer than that many minutes go on different rows (capped at 3 rows;
+/// extras reuse the top row). Returns the per-item rows and the row count (>= 1).
+fn stagger_rows(minutes: &[i64], scale_max: u16) -> (Vec<i32>, i32) {
+    const MAX_ROWS: usize = 3;
+    // A pill occupies roughly this fraction of the axis width; arrivals closer
+    // than that go on separate rows.
+    let threshold = (i64::from(scale_max) * 22 / 100).max(1);
+    // (original index, minute), processed in ascending-minute order.
+    let mut order: Vec<(usize, i64)> = minutes.iter().copied().enumerate().collect();
+    order.sort_by_key(|&(_, m)| m);
+    let mut last: Vec<i64> = Vec::new(); // last minute placed on each row
+    let mut rows = vec![0i32; minutes.len()];
+    for (idx, m) in order {
+        let free = last.iter().position(|&lastm| m - lastm >= threshold);
+        let r = match free {
+            Some(r) => {
+                if let Some(l) = last.get_mut(r) {
+                    *l = m;
+                }
+                r
+            }
+            None if last.len() < MAX_ROWS => {
+                last.push(m);
+                last.len() - 1
+            }
+            None => {
+                let r = MAX_ROWS - 1;
+                if let Some(l) = last.get_mut(r) {
+                    *l = m;
+                }
+                r
+            }
+        };
+        if let Some(slot) = rows.get_mut(idx) {
+            *slot = i32::try_from(r).unwrap_or(0);
+        }
+    }
+    (rows, i32::try_from(last.len().max(1)).unwrap_or(1))
+}
+
+/// Build the Slint timeline lanes for a commute's stops (UI thread — makes
+/// `ModelRc`s). `scale_max` is the window duration in minutes, used to stagger
+/// overlapping pills.
+fn lanes_model(
+    stops: &[StopArrivals],
+    scale_max: i32,
+    start_label: &str,
+    end_label: &str,
+) -> ModelRc<StopLane> {
+    let scale = u16::try_from(scale_max.max(0)).unwrap_or(0);
     let lanes: Vec<StopLane> = stops
         .iter()
-        .map(|sa| StopLane {
-            name: SharedString::from(sa.name.as_str()),
-            code: SharedString::from(sa.code.as_str()),
-            start_label: SharedString::from(start_label),
-            end_label: SharedString::from(end_label),
-            tags: ModelRc::new(VecModel::from(
-                sa.items
-                    .iter()
-                    .map(|it| ArrivalTag {
-                        buses: SharedString::from(it.buses.join("·")),
-                        minutes: i32::try_from(it.minutes).unwrap_or(0),
-                    })
-                    .collect::<Vec<_>>(),
-            )),
+        .map(|sa| {
+            let minutes: Vec<i64> = sa.items.iter().map(|it| it.minutes).collect();
+            let (item_rows, row_count) = stagger_rows(&minutes, scale);
+            StopLane {
+                name: SharedString::from(sa.name.as_str()),
+                code: SharedString::from(sa.code.as_str()),
+                start_label: SharedString::from(start_label),
+                end_label: SharedString::from(end_label),
+                row_count,
+                tags: ModelRc::new(VecModel::from(
+                    sa.items
+                        .iter()
+                        .enumerate()
+                        .map(|(i, it)| ArrivalTag {
+                            buses: SharedString::from(it.buses.join("·")),
+                            minutes: i32::try_from(it.minutes).unwrap_or(0),
+                            row: item_rows.get(i).copied().unwrap_or(0),
+                        })
+                        .collect::<Vec<_>>(),
+                )),
+            }
         })
         .collect();
     ModelRc::new(VecModel::from(lanes))
@@ -200,7 +257,7 @@ pub fn spawn_arrivals(window: &AppWindow, store: &CommuteStore) {
                         label: SharedString::from(d.label),
                         active: d.active,
                         index: d.index,
-                        lanes: lanes_model(&d.stops, &d.start_label, &d.end_label),
+                        lanes: lanes_model(&d.stops, d.scale, &d.start_label, &d.end_label),
                         scale_max: d.scale,
                         days: ModelRc::new(VecModel::from(d.days)),
                         today: d.today,
@@ -212,4 +269,39 @@ pub fn spawn_arrivals(window: &AppWindow, store: &CommuteStore) {
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stagger_rows;
+
+    #[test]
+    fn well_spread_arrivals_share_the_bottom_row() {
+        // 30-min axis → ~5-min threshold; 0/7/20 are all far enough apart.
+        let (rows, count) = stagger_rows(&[0, 7, 20], 30);
+        assert_eq!(rows, vec![0, 0, 0]);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn close_arrivals_stack_on_separate_rows() {
+        // 90-min axis → ~16-min threshold; 3 and 7 are too close → row 0 and 1.
+        let (rows, count) = stagger_rows(&[3, 7], 90);
+        assert_eq!(rows, vec![0, 1]);
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn overflow_beyond_three_rows_reuses_the_top_row() {
+        let (rows, count) = stagger_rows(&[0, 1, 2, 3], 90);
+        assert_eq!(rows, vec![0, 1, 2, 2]);
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn empty_lane_reports_one_row() {
+        let (rows, count) = stagger_rows(&[], 30);
+        assert!(rows.is_empty());
+        assert_eq!(count, 1);
+    }
 }

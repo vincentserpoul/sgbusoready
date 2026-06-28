@@ -8,6 +8,9 @@ import { Palette, Type } from "theme.slint";
 export struct ArrivalTag {
     buses: string,
     minutes: int,
+    // Stagger row (0 = nearest the baseline) so pills that would overlap
+    // horizontally are stacked on separate rows.
+    row: int,
 }
 
 // One stop's timeline lane.
@@ -19,6 +22,8 @@ export struct StopLane {
     // (right), e.g. "09:35" / "10:05". Refreshed on each arrivals poll.
     start-label: string,
     end-label: string,
+    // Number of stagger rows this lane needs (>= 1); drives the lane height.
+    row-count: int,
 }
 
 // Content fills the screen width (phone-first); per-screen padding provides the
@@ -268,7 +273,10 @@ export component TimelineLane inherits Rectangle {
     // small + grey, flanking the timeline at the same level.
     in property <string> start-label;
     in property <string> end-label;
-    height: 124px;
+    // Stagger rows needed (>= 1); each extra row makes the lane taller.
+    in property <int> row-count: 1;
+    // 98px fits a single row; each extra stagger row adds 40px.
+    height: 98px + (max(root.row-count, 1) - 1) * 40px;
     // Geometry is relative to the graph element (the clock labels flank it).
     property <length> pad-l: 4px;
     property <length> usable: graph.width - root.pad-l * 2;
@@ -298,20 +306,22 @@ export component TimelineLane inherits Rectangle {
             }
             graph := Rectangle {
                 horizontal-stretch: 1;
+                // Baseline sits near the bottom; pills stack upward above it.
+                property <length> base-y: parent.height - 30px;
                 // Adaptive 5-min graduations spanning the whole window duration;
                 // numbered every 5 min for short windows, every 15 for long ones.
                 for i in (root.scale-max / 5): Rectangle {
                     property <int> t: (i + 1) * 5;
                     Rectangle {
                         x: root.cx-of(t) - 1px;
-                        y: 30px;
+                        y: 4px;
                         width: 1px;
-                        height: parent.height - 80px;
+                        height: graph.base-y - 4px;
                         background: Palette.hairline;
                     }
                     if root.scale-max <= 60 || mod(t, 15) == 0: Text {
                         x: root.cx-of(t) - self.width / 2;
-                        y: parent.height - 20px;
+                        y: parent.height - 14px;
                         text: "\{t}";
                         font-size: Type.label;
                         color: Palette.text-faint;
@@ -320,7 +330,7 @@ export component TimelineLane inherits Rectangle {
                 // baseline (white path)
                 Rectangle {
                     x: root.pad-l;
-                    y: parent.height - 50px;
+                    y: graph.base-y;
                     width: root.usable;
                     height: 2px;
                     background: Palette.text-dim;
@@ -328,7 +338,7 @@ export component TimelineLane inherits Rectangle {
                 // now marker (neutral)
                 Rectangle {
                     x: root.pad-l - 5px;
-                    y: parent.height - 54px;
+                    y: graph.base-y - 4px;
                     width: 11px;
                     height: 11px;
                     border-radius: 6px;
@@ -338,31 +348,41 @@ export component TimelineLane inherits Rectangle {
                     // Clamp position to the fixed range; the label still shows the
                     // real minutes, so a far bus parks at the right edge.
                     property <length> cx: root.cx-of(min(tag.minutes, root.scale-max));
-                    // leader (white)
+                    // Stagger upward by row so close pills don't overlap.
+                    property <length> pill-bottom: graph.base-y - 8px - tag.row * 40px;
+                    // leader from the pill down to the baseline
                     Rectangle {
                         x: parent.cx - 1px;
-                        y: 30px;
+                        y: parent.pill-bottom;
                         width: 2px;
-                        height: parent.height - 80px;
+                        height: graph.base-y - parent.pill-bottom;
                         background: Palette.text-faint;
                     }
-                    // red dot on the line, under the bus pill
+                    // red dot on the baseline at the exact minute
                     Rectangle {
                         x: parent.cx - 6px;
-                        y: parent.height - 55px;
+                        y: graph.base-y - 5px;
                         width: 12px;
                         height: 12px;
                         border-radius: 6px;
                         background: Palette.accent-solid;
                     }
-                    // bus pill above the line — width hugs its label so each tag
-                    // reads as a separate chip (no width => fills the lane).
+                    // red arrival timing just above the pill, suffixed "m"
+                    Text {
+                        x: parent.cx - self.width / 2;
+                        y: parent.pill-bottom - 24px - 15px;
+                        text: tag.minutes <= 0 ? "due" : "\{tag.minutes}m";
+                        font-size: Type.label;
+                        font-weight: 700;
+                        color: Palette.accent-solid;
+                    }
+                    // bus pill — width hugs its label so each tag reads as a chip.
                     pill := Rectangle {
                         x: parent.cx - self.width / 2;
-                        y: 0px;
-                        width: plabel.preferred-width + 18px;
-                        height: 30px;
-                        border-radius: 10px;
+                        y: parent.pill-bottom - 24px;
+                        width: plabel.preferred-width + 16px;
+                        height: 24px;
+                        border-radius: 9px;
                         background: Palette.accent-solid;
                         plabel := Text {
                             x: (parent.width - self.width) / 2;
@@ -372,15 +392,6 @@ export component TimelineLane inherits Rectangle {
                             font-weight: 700;
                             color: Palette.on-accent;
                         }
-                    }
-                    // red arrival timing just below the line, suffixed "m"
-                    Text {
-                        x: parent.cx - self.width / 2;
-                        y: parent.height - 44px;
-                        text: tag.minutes <= 0 ? "due" : "\{tag.minutes}m";
-                        font-size: Type.body;
-                        font-weight: 700;
-                        color: Palette.accent-solid;
                     }
                 }
             }
