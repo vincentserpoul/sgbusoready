@@ -36,6 +36,10 @@ allow = [
   "BSL-1.0",
   "CDLA-Permissive-2.0",
   "Unlicense",
+  # NCSA (University of Illinois/NCSA Open Source) — OSI-approved, FSF Free/Libre,
+  # permissive and GPL-compatible. Pulled in (build-time) via Slint 1.17's compiler
+  # → image → ravif → rav1e → libfuzzer-sys.
+  "NCSA",
   # This app is licensed GPL-3.0-only (see LICENSE), which is also the license we
   # elect for Slint (tri-licensed GPL-3.0 / Royalty-Free / paid Software).
   "GPL-3.0-only",

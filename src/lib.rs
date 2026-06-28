@@ -137,7 +137,7 @@ fn pick_time(tag: &str, hour: i32, minute: i32) {
 /// A small dp value as a Slint logical length (logical px ≈ dp on Android).
 #[cfg(target_os = "android")]
 #[allow(clippy::cast_precision_loss, reason = "small status-bar dp value")]
-fn dp_to_length(dp: i32) -> f32 {
+const fn dp_to_length(dp: i32) -> f32 {
     dp as f32
 }
 
@@ -148,27 +148,34 @@ fn dp_to_length(dp: i32) -> f32 {
     reason = "Android JNI export; the sole unsafe surface per the platform-bridge exception"
 )]
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_com_sgbuscommute_CommuteNative_onTimePicked(
-    mut env: jni::JNIEnv,
-    _class: jni::objects::JClass,
-    tag: jni::objects::JString,
+pub extern "C" fn Java_com_sgbuscommute_CommuteNative_onTimePicked<'local>(
+    mut env: jni::EnvUnowned<'local>,
+    _class: jni::objects::JClass<'local>,
+    tag: jni::objects::JString<'local>,
     hour: jni::sys::jint,
     minute: jni::sys::jint,
 ) {
-    let tag: String = env.get_string(&tag).map(Into::into).unwrap_or_default();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Ok(guard) = EDITOR_WINDOW.lock()
-            && let Some(w) = guard.as_ref().and_then(slint::Weak::upgrade)
-        {
-            if tag == "start" {
-                w.set_start_hour(hour);
-                w.set_start_minute(minute);
-            } else {
-                w.set_end_hour(hour);
-                w.set_end_minute(minute);
+    env.with_env(|env| -> jni::errors::Result<()> {
+        let tag: String = tag
+            .mutf8_chars(env)
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Ok(guard) = EDITOR_WINDOW.lock()
+                && let Some(w) = guard.as_ref().and_then(slint::Weak::upgrade)
+            {
+                if tag == "start" {
+                    w.set_start_hour(hour);
+                    w.set_start_minute(minute);
+                } else {
+                    w.set_end_hour(hour);
+                    w.set_end_minute(minute);
+                }
             }
-        }
-    });
+        });
+        Ok(())
+    })
+    .resolve::<jni::errors::LogErrorAndDefault>();
 }
 
 /// Handle system Back: if on a sub-screen, navigate to the list and return true
@@ -180,11 +187,11 @@ pub extern "C" fn Java_com_sgbuscommute_CommuteNative_onTimePicked(
 )]
 #[unsafe(no_mangle)]
 pub extern "C" fn Java_com_sgbuscommute_CommuteNative_onBackPressed(
-    _env: jni::JNIEnv,
-    _class: jni::objects::JClass,
+    _env: jni::EnvUnowned<'_>,
+    _class: jni::objects::JClass<'_>,
 ) -> jni::sys::jboolean {
     if ON_LIST.load(Ordering::Relaxed) {
-        return 0;
+        return false;
     }
     let _ = slint::invoke_from_event_loop(|| {
         if let Ok(guard) = EDITOR_WINDOW.lock()
@@ -193,7 +200,7 @@ pub extern "C" fn Java_com_sgbuscommute_CommuteNative_onBackPressed(
             w.set_screen(Screen::List);
         }
     });
-    1
+    true
 }
 
 /// Run `f` with a borrow of the catalog, tolerating lock poisoning.
@@ -824,13 +831,13 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
     reason = "Android requires a #[no_mangle] entry; this is the sole unsafe surface, per the platform-bridge exception in the design doc"
 )]
 #[unsafe(no_mangle)]
-fn android_main(app: slint::android::AndroidApp) {
+extern "Rust" fn android_main(app: slint::android::AndroidApp) {
     android_bridge::ensure_logger();
     android_bridge::set_activity_ptr(app.activity_as_ptr());
-    let store_path = app
-        .internal_data_path()
-        .map(|p| p.join("commutes.json"))
-        .unwrap_or_else(|| PathBuf::from("commutes.json"));
+    let store_path = app.internal_data_path().map_or_else(
+        || PathBuf::from("commutes.json"),
+        |p| p.join("commutes.json"),
+    );
     if slint::android::init(app).is_err() {
         return;
     }

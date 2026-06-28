@@ -35,6 +35,32 @@ check-android:
 check-ios:
     cargo check -p sgbr-core --target aarch64-apple-ios
 
+# Build the Android cdylib into android/app/src/main/jniLibs (arm64-v8a).
+# Sources android/.env.build for SDK/NDK/ANDROID_JAR and the LTA key. Uses --lib
+# to skip the desktop bin, which can't link Skia's `stdout` reference on Android.
+build-android:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source android/.env.build
+    cargo ndk -t arm64-v8a -o android/app/src/main/jniLibs build --lib
+
+# Lint the Android target (the host clippy skips cfg(android) code). Run via
+# cargo-ndk so the NDK C toolchain (for ring/skia) is configured.
+clippy-android:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source android/.env.build
+    cargo ndk -t arm64-v8a clippy --lib -- -D warnings -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
+
+# Build the cdylib, assemble the debug APK, install on a connected device and launch.
+run-android: build-android
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source android/.env.build
+    ./android/gradlew -p android assembleDebug
+    adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+    adb shell am start -n com.sgbuscommute/.MainActivity
+
 # Run all tests with nextest
 test:
     cargo nextest run --workspace

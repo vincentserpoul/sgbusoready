@@ -410,7 +410,10 @@ mod tests {
 
     #[test]
     fn scale_minutes_defaults_to_15() {
-        assert_eq!(weekday_commute().scale_minutes, Commute::DEFAULT_SCALE_MINUTES);
+        assert_eq!(
+            weekday_commute().scale_minutes,
+            Commute::DEFAULT_SCALE_MINUTES
+        );
         assert_eq!(Commute::DEFAULT_SCALE_MINUTES, 15);
     }
 

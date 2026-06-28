@@ -6,8 +6,9 @@
 //!   The `JNIEnv` is supplied and the calling thread is a normal Java thread,
 //!   so no class-loader dance is needed.
 //! - **Rust → Kotlin** (`arm_alarms`): called from `android_main`'s native
-//!   thread, which resolves `FindClass` with the *system* class loader, so app
-//!   classes must be loaded via the Activity's class loader (`load_app_class`).
+//!   thread. With jni 0.22 + android-activity the thread context class loader is
+//!   set for us, so app classes resolve via `Env::load_class` (which uses that
+//!   loader) — no manual Activity class-loader dance needed.
 //!
 //! SAFETY: this whole module is the documented platform-bridge unsafe surface
 //! (per the design doc); each unsafe block has a safety comment. Errors are
@@ -23,8 +24,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jni::errors::Error as JniError;
 use jni::objects::{JClass, JObject, JString, JValue};
-use jni::sys::{jlong, jstring};
-use jni::{AttachGuard, JNIEnv, JavaVM};
+use jni::sys::jlong;
+use jni::{EnvUnowned, JavaVM, jni_sig, jni_str};
 use time::OffsetDateTime;
 use time::macros::offset;
 
@@ -34,7 +35,7 @@ use sgbr_core::commute::store::CommuteStore;
 use sgbr_core::lta::arrival::{StopArrivals, stop_arrivals};
 use sgbr_core::lta::client::fetch_arrivals;
 
-/// LTA DataMall AccountKey, injected at build time from `LTA_API_ACCOUNT_KEY`
+/// LTA `DataMall` `AccountKey`, injected at build time from `LTA_API_ACCOUNT_KEY`
 /// (read from the repo-root `.env` by `android/.env.build`). Empty if unset,
 /// in which case fetches fail gracefully and rows show "no buses".
 const ACCOUNT_KEY: &str = match option_env!("LTA_API_ACCOUNT_KEY") {
@@ -92,49 +93,23 @@ fn render_active(files_dir: &str, now: OffsetDateTime) -> String {
     format_active_notification(&stops)
 }
 
-/// Resolve an app class by binary name through the Activity's class loader.
-/// Needed for Rust→Kotlin calls from native threads (see module docs).
-fn load_app_class<'a>(
-    env: &mut AttachGuard<'a>,
-    activity: &JObject,
-    binary_name: &str,
-) -> Result<JClass<'a>, JniError> {
-    let loader = env
-        .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
-        .l()?;
-    let name = env.new_string(binary_name)?;
-    let class_obj = env
-        .call_method(
-            &loader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[JValue::Object(&name)],
-        )?
-        .l()?;
-    Ok(JClass::from(class_obj))
-}
-
 /// Re-arm the next boundary alarm via `AlarmScheduler.arm(context)`.
 fn arm_alarms_inner() -> Result<(), JniError> {
     let ctx = ndk_context::android_context();
     // SAFETY: ndk-context holds the process JavaVM, valid for the process life.
-    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    // SAFETY: ndk-context holds the running Activity (a Context) jobject.
-    let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
-    let scheduler = load_app_class(&mut env, &activity, "com.sgbuscommute.AlarmScheduler")?;
-    let call = env.call_static_method(
-        &scheduler,
-        "arm",
-        "(Landroid/content/Context;)V",
-        &[JValue::Object(&activity)],
-    );
-    if call.is_err() {
-        let _ = env.exception_describe();
-        let _ = env.exception_clear();
-    }
-    call?;
-    Ok(())
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) };
+    vm.attach_current_thread(|env| {
+        // SAFETY: ndk-context holds the running Activity (a Context) jobject.
+        let activity = unsafe { JObject::from_raw(env, ctx.context().cast()) };
+        let scheduler = env.load_class(jni_str!("com.sgbuscommute.AlarmScheduler"))?;
+        env.call_static_method(
+            &scheduler,
+            jni_str!("arm"),
+            jni_sig!("(Landroid/content/Context;)V"),
+            &[JValue::Object(&activity)],
+        )?;
+        Ok(())
+    })
 }
 
 /// Arm the commute alarms based on the saved store. Errors are logged only.
@@ -148,23 +123,19 @@ pub fn arm_alarms() {
 fn start_commute_service_inner() -> Result<(), JniError> {
     let ctx = ndk_context::android_context();
     // SAFETY: ndk-context holds the process JavaVM, valid for the process life.
-    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    // SAFETY: ndk-context holds a running Context jobject (the Application).
-    let context = unsafe { JObject::from_raw(ctx.context().cast()) };
-    let service = load_app_class(&mut env, &context, "com.sgbuscommute.CommuteService")?;
-    let call = env.call_static_method(
-        &service,
-        "start",
-        "(Landroid/content/Context;)V",
-        &[JValue::Object(&context)],
-    );
-    if call.is_err() {
-        let _ = env.exception_describe();
-        let _ = env.exception_clear();
-    }
-    call?;
-    Ok(())
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) };
+    vm.attach_current_thread(|env| {
+        // SAFETY: ndk-context holds a running Context jobject (the Application).
+        let context = unsafe { JObject::from_raw(env, ctx.context().cast()) };
+        let service = env.load_class(jni_str!("com.sgbuscommute.CommuteService"))?;
+        env.call_static_method(
+            &service,
+            jni_str!("start"),
+            jni_sig!("(Landroid/content/Context;)V"),
+            &[JValue::Object(&context)],
+        )?;
+        Ok(())
+    })
 }
 
 /// Start the foreground service now (used when a commute is already active at
@@ -178,18 +149,19 @@ pub fn start_commute_service() {
 fn status_bar_top_dp_inner() -> Result<i32, JniError> {
     let ctx = ndk_context::android_context();
     // SAFETY: ndk-context holds the process JavaVM, valid for the process life.
-    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    // SAFETY: ndk-context holds the running Activity (a Context) jobject.
-    let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
-    let helper = load_app_class(&mut env, &activity, "com.sgbuscommute.InsetsHelper")?;
-    let value = env.call_static_method(
-        &helper,
-        "statusBarTopDp",
-        "(Landroid/content/Context;)I",
-        &[JValue::Object(&activity)],
-    )?;
-    value.i()
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) };
+    vm.attach_current_thread(|env| {
+        // SAFETY: ndk-context holds the running Activity (a Context) jobject.
+        let activity = unsafe { JObject::from_raw(env, ctx.context().cast()) };
+        let helper = env.load_class(jni_str!("com.sgbuscommute.InsetsHelper"))?;
+        let value = env.call_static_method(
+            &helper,
+            jni_str!("statusBarTopDp"),
+            jni_sig!("(Landroid/content/Context;)I"),
+            &[JValue::Object(&activity)],
+        )?;
+        value.i()
+    })
 }
 
 /// The status-bar height in dp (Slint logical units); 0 on failure.
@@ -209,31 +181,31 @@ pub fn set_activity_ptr(ptr: *mut c_void) {
 fn show_time_picker_inner(tag: &str, hour: i32, minute: i32) -> Result<(), JniError> {
     let ctx = ndk_context::android_context();
     // SAFETY: ndk-context holds the process JavaVM, valid for the process life.
-    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    // SAFETY: the stashed NativeActivity jobject is a global ref held for the
-    // activity's lifetime; a dialog requires the Activity, not the Application.
-    let activity =
-        unsafe { JObject::from_raw(ACTIVITY_PTR.load(Ordering::Relaxed) as jni::sys::jobject) };
-    let helper = load_app_class(&mut env, &activity, "com.sgbuscommute.TimePicker")?;
-    let jtag = env.new_string(tag)?;
-    let call = env.call_static_method(
-        &helper,
-        "show",
-        "(Landroid/content/Context;Ljava/lang/String;II)V",
-        &[
-            JValue::Object(&activity),
-            JValue::Object(&jtag),
-            JValue::Int(hour),
-            JValue::Int(minute),
-        ],
-    );
-    if call.is_err() {
-        let _ = env.exception_describe();
-        let _ = env.exception_clear();
-    }
-    call?;
-    Ok(())
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) };
+    vm.attach_current_thread(|env| {
+        // SAFETY: the stashed NativeActivity jobject is a global ref held for the
+        // activity's lifetime; a dialog requires the Activity, not the Application.
+        let activity = unsafe {
+            JObject::from_raw(
+                env,
+                ACTIVITY_PTR.load(Ordering::Relaxed) as jni::sys::jobject,
+            )
+        };
+        let helper = env.load_class(jni_str!("com.sgbuscommute.TimePicker"))?;
+        let jtag = env.new_string(tag)?;
+        env.call_static_method(
+            &helper,
+            jni_str!("show"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;II)V"),
+            &[
+                JValue::Object(&activity),
+                JValue::Object(&jtag),
+                JValue::Int(hour),
+                JValue::Int(minute),
+            ],
+        )?;
+        Ok(())
+    })
 }
 
 /// Show the native Android `TimePickerDialog`; the result comes back via the
@@ -250,40 +222,42 @@ pub fn show_time_picker(tag: &str, hour: i32, minute: i32) {
 
 /// `CommuteNative.renderActive(filesDir, epochSecs) -> String`
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_com_sgbuscommute_CommuteNative_renderActive(
-    mut env: JNIEnv,
-    _class: JClass,
-    files_dir: JString,
+pub extern "C" fn Java_com_sgbuscommute_CommuteNative_renderActive<'local>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    files_dir: JString<'local>,
     epoch_secs: jlong,
-) -> jstring {
+) -> JString<'local> {
     ensure_logger();
-    let dir: String = match env.get_string(&files_dir) {
-        Ok(s) => s.into(),
-        Err(_) => String::new(),
-    };
-    let body = render_active(&dir, unix_to_sgt(epoch_secs));
-    match env.new_string(body) {
-        Ok(s) => s.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    env.with_env(|env| -> jni::errors::Result<JString<'local>> {
+        let dir: String = files_dir.mutf8_chars(env)?.to_string();
+        let body = render_active(&dir, unix_to_sgt(epoch_secs));
+        env.new_string(body)
+    })
+    .resolve::<jni::errors::LogErrorAndDefault>()
 }
 
 /// `CommuteNative.nextAlarmEpochMillis(filesDir, epochSecs) -> long` (-1 = none)
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_com_sgbuscommute_CommuteNative_nextAlarmEpochMillis(
-    mut env: JNIEnv,
-    _class: JClass,
-    files_dir: JString,
+pub extern "C" fn Java_com_sgbuscommute_CommuteNative_nextAlarmEpochMillis<'local>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    files_dir: JString<'local>,
     epoch_secs: jlong,
 ) -> jlong {
     ensure_logger();
-    let dir: String = match env.get_string(&files_dir) {
-        Ok(s) => s.into(),
-        Err(_) => return -1,
-    };
-    let store = CommuteStore::load(&store_path(&dir)).unwrap_or_default();
-    match next_alarm_at(&store.commutes, unix_to_sgt(epoch_secs)) {
-        Some(dt) => dt.unix_timestamp() * 1000,
-        None => -1,
-    }
+    env.with_env(|env| -> jni::errors::Result<jlong> {
+        let dir: String = match files_dir.mutf8_chars(env) {
+            Ok(s) => s.to_string(),
+            Err(_) => return Ok(-1),
+        };
+        let store = CommuteStore::load(&store_path(&dir)).unwrap_or_default();
+        Ok(
+            match next_alarm_at(&store.commutes, unix_to_sgt(epoch_secs)) {
+                Some(dt) => dt.unix_timestamp() * 1000,
+                None => -1,
+            },
+        )
+    })
+    .resolve::<jni::errors::LogErrorAndDefault>()
 }
