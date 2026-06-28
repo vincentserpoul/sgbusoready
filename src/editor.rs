@@ -112,7 +112,6 @@ pub fn populate_form(
         window.set_start_minute(i32::from(c.start.minute));
         window.set_end_hour(i32::from(c.end.hour));
         window.set_end_minute(i32::from(c.end.minute));
-        window.set_form_scale(i32::from(c.scale_minutes));
         for st in &c.stops {
             let mut services = stop_services(catalog, &st.code);
             // Keep tracked buses visible even if the catalog lacks them.
@@ -136,7 +135,6 @@ pub fn populate_form(
         window.set_start_minute(0);
         window.set_end_hour(9);
         window.set_end_minute(0);
-        window.set_form_scale(i32::from(Commute::DEFAULT_SCALE_MINUTES));
     }
     form_stops.borrow_mut().clone_from(&stops);
     push_form_stops(window, &stops);

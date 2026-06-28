@@ -15,6 +15,10 @@ export struct StopLane {
     name: string,
     code: string,
     tags: [ArrivalTag],
+    // Clock labels for the rolling axis ends: `now` (left) and `now + window`
+    // (right), e.g. "09:35" / "10:05". Refreshed on each arrivals poll.
+    start-label: string,
+    end-label: string,
 }
 
 // Content fills the screen width (phone-first); per-screen padding provides the
@@ -260,9 +264,12 @@ export component TimelineLane inherits Rectangle {
     in property <string> name;
     in property <[ArrivalTag]> tags;
     in property <int> scale-max: 15;
+    // Rolling-axis clock labels: `now` (left) and `now + window` (right).
+    in property <string> start-label;
+    in property <string> end-label;
     // Grey reference graduations; only those within `scale-max` are drawn.
     property <[int]> ticks: [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
-    height: 124px;
+    height: 140px;
     property <length> pad-l: 10px;
     property <length> usable: self.width - root.pad-l - 16px;
     function cx-of(minutes: int) -> length {
@@ -271,13 +278,31 @@ export component TimelineLane inherits Rectangle {
         root.pad-l + root.usable * (minutes * 1.0 / max(root.scale-max, 1))
     }
     VerticalLayout {
-        spacing: 4px;
+        spacing: 2px;
         Text {
             text: root.name;
             font-size: Type.caption;
             font-weight: 600;
             color: Palette.text;
             overflow: elide;
+        }
+        // Rolling clock labels aligned to the axis ends.
+        HorizontalLayout {
+            padding-left: root.pad-l;
+            padding-right: 16px;
+            Text {
+                text: root.start-label;
+                font-size: Type.label;
+                font-weight: 700;
+                color: Palette.text;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: root.end-label;
+                font-size: Type.label;
+                font-weight: 700;
+                color: Palette.text;
+            }
         }
         Rectangle {
             vertical-stretch: 1;

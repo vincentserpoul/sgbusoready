@@ -80,12 +80,6 @@ pub struct CommuteStop {
     pub buses: Vec<String>,
 }
 
-/// Default fixed timeline range, in minutes, for a commute without a stored
-/// value (also the serde fallback for older persisted commutes).
-const fn default_scale_minutes() -> u16 {
-    Commute::DEFAULT_SCALE_MINUTES
-}
-
 /// A recurring commute: a set of stops (each with its own tracked buses), on a
 /// set of weekdays, within a single-day time window (`start` < `end`, no
 /// overnight wrap).
@@ -101,23 +95,10 @@ pub struct Commute {
     pub end: TimeOfDay,
     /// Stops tracked by this commute (>= 1).
     pub stops: Vec<CommuteStop>,
-    /// Fixed in-app timeline axis length, in minutes. Kept per-commute so the
-    /// scale stays stable instead of tracking the largest live arrival.
-    #[serde(default = "default_scale_minutes")]
-    pub scale_minutes: u16,
 }
 
 impl Commute {
-    /// Smallest selectable fixed timeline range, in minutes.
-    pub const MIN_SCALE_MINUTES: u16 = 10;
-    /// Largest selectable fixed timeline range, in minutes.
-    pub const MAX_SCALE_MINUTES: u16 = 120;
-    /// Default fixed timeline range, in minutes.
-    pub const DEFAULT_SCALE_MINUTES: u16 = 15;
-
     /// Construct a validated commute. See [`CommuteError`] for failure modes.
-    /// The timeline range defaults to [`Self::DEFAULT_SCALE_MINUTES`]; override
-    /// it with [`Self::with_scale_minutes`].
     pub fn new(
         label: Option<String>,
         days: Weekdays,
@@ -151,16 +132,16 @@ impl Commute {
             start,
             end,
             stops,
-            scale_minutes: Self::DEFAULT_SCALE_MINUTES,
         })
     }
 
-    /// Set the fixed timeline range, clamped to
-    /// [`Self::MIN_SCALE_MINUTES`]..=[`Self::MAX_SCALE_MINUTES`].
+    /// The timeline axis length, in minutes: the window duration (`end - start`).
+    /// `Commute::new` guarantees `end > start`, so this is always >= 1.
     #[must_use]
-    pub fn with_scale_minutes(mut self, minutes: u16) -> Self {
-        self.scale_minutes = minutes.clamp(Self::MIN_SCALE_MINUTES, Self::MAX_SCALE_MINUTES);
-        self
+    pub fn scale_minutes(&self) -> u16 {
+        let start = u16::from(self.start.hour) * 60 + u16::from(self.start.minute);
+        let end = u16::from(self.end.hour) * 60 + u16::from(self.end.minute);
+        end.saturating_sub(start)
     }
 
     /// The label to show. Falls back to the first stop's name, suffixed with
@@ -409,39 +390,50 @@ mod tests {
     }
 
     #[test]
-    fn scale_minutes_defaults_to_15() {
-        assert_eq!(
-            weekday_commute().scale_minutes,
-            Commute::DEFAULT_SCALE_MINUTES
-        );
-        assert_eq!(Commute::DEFAULT_SCALE_MINUTES, 15);
+    fn scale_minutes_is_window_duration() {
+        // 08:00–09:00 → 60 minutes.
+        assert_eq!(weekday_commute().scale_minutes(), 60);
+        // 09:30–10:00 → 30 minutes.
+        let c = Commute::new(
+            None,
+            Weekdays::from_days(&[Monday]),
+            TimeOfDay {
+                hour: 9,
+                minute: 30,
+            },
+            TimeOfDay {
+                hour: 10,
+                minute: 0,
+            },
+            vec![stop("83139", "Opp Blk 123", &["14"])],
+        )
+        .expect("valid commute");
+        assert_eq!(c.scale_minutes(), 30);
+        // Smallest valid window → 1 minute.
+        let c = Commute::new(
+            None,
+            Weekdays::from_days(&[Monday]),
+            TimeOfDay { hour: 8, minute: 0 },
+            TimeOfDay { hour: 8, minute: 1 },
+            vec![stop("83139", "Opp Blk 123", &["14"])],
+        )
+        .expect("valid commute");
+        assert_eq!(c.scale_minutes(), 1);
     }
 
     #[test]
-    fn with_scale_minutes_clamps_to_range() {
-        let c = weekday_commute();
-        assert_eq!(c.clone().with_scale_minutes(30).scale_minutes, 30);
-        assert_eq!(
-            c.clone().with_scale_minutes(1).scale_minutes,
-            Commute::MIN_SCALE_MINUTES
-        );
-        assert_eq!(
-            c.with_scale_minutes(9999).scale_minutes,
-            Commute::MAX_SCALE_MINUTES
-        );
-    }
-
-    #[test]
-    fn deserializes_legacy_commute_without_scale() {
-        // Older persisted commutes have no `scale_minutes`; serde fills the default.
+    fn ignores_legacy_scale_minutes_field() {
+        // Older persisted commutes carry a `scale_minutes` field; it is now derived
+        // from the window, so a stored value is simply ignored on load.
         let legacy = r#"{
             "label": null,
             "days": 3,
             "start": { "hour": 8, "minute": 0 },
             "end": { "hour": 9, "minute": 0 },
-            "stops": [{ "code": "83139", "name": "Opp Blk 123", "buses": ["14"] }]
+            "stops": [{ "code": "83139", "name": "Opp Blk 123", "buses": ["14"] }],
+            "scale_minutes": 45
         }"#;
         let c: Commute = serde_json::from_str(legacy).expect("deserialize legacy");
-        assert_eq!(c.scale_minutes, Commute::DEFAULT_SCALE_MINUTES);
+        assert_eq!(c.scale_minutes(), 60);
     }
 }

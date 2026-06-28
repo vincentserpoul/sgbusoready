@@ -4,7 +4,7 @@
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use time::OffsetDateTime;
 
-use sgbr_core::commute::display::format_see_you_soon;
+use sgbr_core::commute::display::{format_next_time, format_timeline_labels};
 use sgbr_core::commute::model::Commute;
 use sgbr_core::commute::store::CommuteStore;
 use sgbr_core::lta::arrival::{StopArrivals, stop_arrivals};
@@ -17,19 +17,30 @@ fn card_label(commute: &Commute) -> String {
     commute.display_label()
 }
 
-fn see_you_soon(commute: &Commute, now: OffsetDateTime) -> String {
+/// The 7 weekday flags (Mon..Sun) of a commute's active days, for the day pills.
+fn day_flags(commute: &Commute) -> Vec<bool> {
+    use time::Weekday::{Friday, Monday, Saturday, Sunday, Thursday, Tuesday, Wednesday};
+    [
+        Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday,
+    ]
+    .iter()
+    .map(|d| commute.days.contains(*d))
+    .collect()
+}
+
+/// "next <Day> HH:MM" for an inactive card, or empty if there is no next window.
+fn next_time_line(commute: &Commute, now: OffsetDateTime) -> String {
     commute
         .next_window_start(now)
-        .map(format_see_you_soon)
+        .map(format_next_time)
         .unwrap_or_default()
 }
 
-/// Off-window summary line, e.g. "see you soon · next Mon 08:00 · 2 stops · 4 buses".
-fn inactive_summary(commute: &Commute, now: OffsetDateTime) -> String {
+/// "N stops · M buses" for an inactive card.
+fn counts_line(commute: &Commute) -> String {
     let stops = commute.stops.len();
     let buses: usize = commute.stops.iter().map(|s| s.buses.len()).sum();
-    let see = see_you_soon(commute, now);
-    format!("{see} · {stops} stops · {buses} buses")
+    format!("{stops} stops · {buses} buses")
 }
 
 fn empty_lanes() -> ModelRc<StopLane> {
@@ -39,7 +50,7 @@ fn empty_lanes() -> ModelRc<StopLane> {
 /// Skeleton lanes for an active commute: one lane per stop with its name but no
 /// arrival tags yet, so the timeline structure shows immediately while the live
 /// fetch (`spawn_arrivals`) is in flight.
-fn skeleton_lanes(commute: &Commute) -> ModelRc<StopLane> {
+fn skeleton_lanes(commute: &Commute, now: OffsetDateTime) -> ModelRc<StopLane> {
     let stops: Vec<StopArrivals> = commute
         .stops
         .iter()
@@ -49,31 +60,32 @@ fn skeleton_lanes(commute: &Commute) -> ModelRc<StopLane> {
             items: Vec::new(),
         })
         .collect();
-    lanes_model(&stops)
+    let (start, end) = format_timeline_labels(now, commute.scale_minutes());
+    lanes_model(&stops, &start, &end)
 }
 
 /// Build all list rows synchronously (no network): active rows get skeleton lanes
 /// until `spawn_arrivals` fills in live tags; inactive rows get the summary line.
 pub fn rebuild_rows(window: &AppWindow, store: &CommuteStore) {
     let now = now_sgt();
+    let today = i32::from(now.weekday().number_days_from_monday());
     let mut rows: Vec<CommuteRow> = Vec::new();
     for (i, c) in store.commutes.iter().enumerate() {
         let active = c.is_active_at(now);
         rows.push(CommuteRow {
             label: SharedString::from(card_label(c)),
-            status: SharedString::from(if active {
-                String::new()
-            } else {
-                inactive_summary(c, now)
-            }),
             active,
             index: i32::try_from(i).unwrap_or(-1),
             lanes: if active {
-                skeleton_lanes(c)
+                skeleton_lanes(c, now)
             } else {
                 empty_lanes()
             },
-            scale_max: i32::from(c.scale_minutes),
+            scale_max: i32::from(c.scale_minutes()),
+            days: ModelRc::new(VecModel::from(day_flags(c))),
+            today,
+            next_time: SharedString::from(next_time_line(c, now)),
+            counts: SharedString::from(counts_line(c)),
         });
     }
     window.set_rows(ModelRc::new(VecModel::from(rows)));
@@ -83,11 +95,16 @@ pub fn rebuild_rows(window: &AppWindow, store: &CommuteStore) {
 /// `CommuteRow` (which holds non-`Send` `ModelRc`s) back on the UI thread.
 struct RowData {
     label: String,
-    status: String,
     active: bool,
     index: i32,
     stops: Vec<StopArrivals>,
     scale: i32,
+    start_label: String,
+    end_label: String,
+    days: Vec<bool>,
+    today: i32,
+    next_time: String,
+    counts: String,
 }
 
 /// Fetch each stop's arrivals for one active commute (blocking; off-UI only) and
@@ -106,16 +123,18 @@ fn commute_stop_arrivals(commute: &Commute, now: OffsetDateTime) -> (Vec<StopArr
         };
         all.push(arrivals);
     }
-    (all, i32::from(commute.scale_minutes))
+    (all, i32::from(commute.scale_minutes()))
 }
 
 /// Build the Slint timeline lanes for a commute's stops (UI thread — makes `ModelRc`s).
-fn lanes_model(stops: &[StopArrivals]) -> ModelRc<StopLane> {
+fn lanes_model(stops: &[StopArrivals], start_label: &str, end_label: &str) -> ModelRc<StopLane> {
     let lanes: Vec<StopLane> = stops
         .iter()
         .map(|sa| StopLane {
             name: SharedString::from(sa.name.as_str()),
             code: SharedString::from(sa.code.as_str()),
+            start_label: SharedString::from(start_label),
+            end_label: SharedString::from(end_label),
             tags: ModelRc::new(VecModel::from(
                 sa.items
                     .iter()
@@ -145,25 +164,32 @@ pub fn spawn_arrivals(window: &AppWindow, store: &CommuteStore) {
     let weak = window.as_weak();
     std::thread::spawn(move || {
         let now = now_sgt();
+        let today = i32::from(now.weekday().number_days_from_monday());
         let mut data: Vec<RowData> = Vec::new();
         for (i, c) in commutes.iter().enumerate() {
             let active = c.is_active_at(now);
             let (stops, scale) = if active {
                 commute_stop_arrivals(c, now)
             } else {
-                (Vec::new(), 15)
+                (Vec::new(), i32::from(c.scale_minutes()))
+            };
+            let (start_label, end_label) = if active {
+                format_timeline_labels(now, c.scale_minutes())
+            } else {
+                (String::new(), String::new())
             };
             data.push(RowData {
                 label: card_label(c),
-                status: if active {
-                    String::new()
-                } else {
-                    inactive_summary(c, now)
-                },
                 active,
                 index: i32::try_from(i).unwrap_or(-1),
                 stops,
                 scale,
+                start_label,
+                end_label,
+                days: day_flags(c),
+                today,
+                next_time: next_time_line(c, now),
+                counts: counts_line(c),
             });
         }
         let _ = slint::invoke_from_event_loop(move || {
@@ -172,11 +198,14 @@ pub fn spawn_arrivals(window: &AppWindow, store: &CommuteStore) {
                     .into_iter()
                     .map(|d| CommuteRow {
                         label: SharedString::from(d.label),
-                        status: SharedString::from(d.status),
                         active: d.active,
                         index: d.index,
-                        lanes: lanes_model(&d.stops),
+                        lanes: lanes_model(&d.stops, &d.start_label, &d.end_label),
                         scale_max: d.scale,
+                        days: ModelRc::new(VecModel::from(d.days)),
+                        today: d.today,
+                        next_time: SharedString::from(d.next_time),
+                        counts: SharedString::from(d.counts),
                     })
                     .collect();
                 w.set_rows(ModelRc::new(VecModel::from(rows)));

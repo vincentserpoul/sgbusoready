@@ -1,19 +1,68 @@
 //! User-facing string builders for the Live Update and the in-app list row.
 
 use crate::lta::arrival::StopArrivals;
-use time::OffsetDateTime;
 use time::macros::format_description;
+use time::{Duration, OffsetDateTime};
 
-/// Build the in-app "see you soon" row for a commute that is not active now,
-/// e.g. `"see you soon · next Tue 08:00"`. `next_start` is the value returned by
+/// Short weekday + time of the next window start, e.g. `"next Tue 08:00"`.
+/// `next_start` is the value returned by
 /// [`crate::commute::model::Commute::next_window_start`].
 #[must_use]
-pub fn format_see_you_soon(next_start: OffsetDateTime) -> String {
+pub fn format_next_time(next_start: OffsetDateTime) -> String {
     let fmt = format_description!("[weekday repr:short] [hour]:[minute]");
     // The descriptor only uses fields every `OffsetDateTime` has, so formatting
     // is infallible here; `unwrap_or_default` is a safe, lint-clean fallback.
     let when = next_start.format(&fmt).unwrap_or_default();
-    format!("see you soon · next {when}")
+    format!("next {when}")
+}
+
+/// Build the in-app "see you soon" row for a commute that is not active now,
+/// e.g. `"see you soon · next Tue 08:00"`.
+#[must_use]
+pub fn format_see_you_soon(next_start: OffsetDateTime) -> String {
+    format!("see you soon · {}", format_next_time(next_start))
+}
+
+/// A coarse, human countdown for a positive number of `minutes`, e.g. `"45m"`,
+/// `"2h 25m"`, `"2h"`, `"1d 3h"`. Non-positive input renders as `"now"`.
+#[must_use]
+pub fn format_countdown(minutes: i64) -> String {
+    if minutes <= 0 {
+        return "now".to_owned();
+    }
+    let days = minutes / 1440;
+    let hours = (minutes % 1440) / 60;
+    let mins = minutes % 60;
+    if days > 0 {
+        if hours > 0 {
+            format!("{days}d {hours}h")
+        } else {
+            format!("{days}d")
+        }
+    } else if hours > 0 {
+        if mins > 0 {
+            format!("{hours}h {mins}m")
+        } else {
+            format!("{hours}h")
+        }
+    } else {
+        format!("{mins}m")
+    }
+}
+
+/// The two clock labels for a rolling timeline axis: the current time (left) and
+/// `now + duration` (right), each `"HH:MM"` (24h, zero-padded). The right label
+/// wraps past midnight naturally (e.g. `23:50` + 30m → `00:20`).
+#[must_use]
+pub fn format_timeline_labels(now: OffsetDateTime, duration_minutes: u16) -> (String, String) {
+    let fmt = format_description!("[hour]:[minute]");
+    let end = now + Duration::minutes(i64::from(duration_minutes));
+    // The descriptor only uses fields every `OffsetDateTime` has, so formatting is
+    // infallible; `unwrap_or_default` is a safe, lint-clean fallback.
+    (
+        now.format(&fmt).unwrap_or_default(),
+        end.format(&fmt).unwrap_or_default(),
+    )
 }
 
 /// Build the two-line Live Update block for one stop: the stop name on the first
@@ -54,9 +103,52 @@ pub fn format_active_notification(stops: &[StopArrivals]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_active_notification, format_see_you_soon, format_stop_line};
+    use super::{
+        format_active_notification, format_countdown, format_next_time, format_see_you_soon,
+        format_stop_line, format_timeline_labels,
+    };
     use crate::lta::arrival::{ArrivalItem, StopArrivals};
     use time::macros::datetime;
+
+    #[test]
+    fn next_time_is_short_weekday_and_time() {
+        assert_eq!(
+            format_next_time(datetime!(2026-06-23 08:00:00 +8)),
+            "next Tue 08:00"
+        );
+    }
+
+    #[test]
+    fn countdown_formats_coarse_human_durations() {
+        assert_eq!(format_countdown(0), "now");
+        assert_eq!(format_countdown(45), "45m");
+        assert_eq!(format_countdown(145), "2h 25m");
+        assert_eq!(format_countdown(120), "2h");
+        assert_eq!(format_countdown(1440), "1d");
+        assert_eq!(format_countdown(1500), "1d 1h");
+    }
+
+    #[test]
+    fn timeline_labels_span_now_to_now_plus_duration() {
+        // 09:35 + 30m → 10:05.
+        assert_eq!(
+            format_timeline_labels(datetime!(2026-06-28 09:35:00 +8), 30),
+            ("09:35".to_owned(), "10:05".to_owned())
+        );
+    }
+
+    #[test]
+    fn timeline_labels_zero_pad_and_wrap_midnight() {
+        // 08:05 zero-pads; 23:50 + 30m wraps to 00:20.
+        assert_eq!(
+            format_timeline_labels(datetime!(2026-06-28 08:05:00 +8), 15),
+            ("08:05".to_owned(), "08:20".to_owned())
+        );
+        assert_eq!(
+            format_timeline_labels(datetime!(2026-06-28 23:50:00 +8), 30),
+            ("23:50".to_owned(), "00:20".to_owned())
+        );
+    }
 
     #[test]
     fn see_you_soon_formats_short_weekday_and_time() {

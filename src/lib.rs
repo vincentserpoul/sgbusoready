@@ -48,6 +48,7 @@ pub(crate) use generated::{
 mod android_bridge;
 mod catalog;
 mod editor;
+mod hero;
 mod rows;
 
 use std::cell::RefCell;
@@ -69,6 +70,7 @@ use editor::{
     EditStopState, FormStops, populate_form, push_form_stops, read_weekdays, stop_services,
     time_of_day,
 };
+use hero::update_hero;
 use rows::{rebuild_rows, spawn_arrivals};
 
 type Store = Rc<RefCell<CommuteStore>>;
@@ -239,9 +241,8 @@ fn handle_save(window: &AppWindow, store: &Store, path: &Path, form_stops: &Form
         })
         .collect();
 
-    let scale = u16::try_from(window.get_form_scale()).unwrap_or(Commute::DEFAULT_SCALE_MINUTES);
     let commute = match Commute::new(label, days, start, end, stops) {
-        Ok(c) => c.with_scale_minutes(scale),
+        Ok(c) => c,
         Err(e) => {
             window.set_error_text(SharedString::from(e.to_string()));
             return;
@@ -265,6 +266,7 @@ fn handle_save(window: &AppWindow, store: &Store, path: &Path, form_stops: &Form
 
     populate_form(window, None, -1, None, form_stops);
     rebuild_rows(window, &store.borrow());
+    update_hero(window, &store.borrow());
     spawn_arrivals(window, &store.borrow());
     window.set_screen(Screen::List);
 }
@@ -285,6 +287,7 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
     let window = AppWindow::new()?;
     let form_stops: FormStops = Rc::new(RefCell::new(Vec::new()));
     rebuild_rows(&window, &store.borrow());
+    update_hero(&window, &store.borrow());
     with_catalog(&catalog, |cat| {
         populate_form(&window, None, -1, cat, &form_stops);
     });
@@ -339,6 +342,7 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
             }
             drop(store);
             rebuild_rows(&w, &s.borrow());
+            update_hero(&w, &s.borrow());
             spawn_arrivals(&w, &s.borrow());
         }
     });
@@ -451,6 +455,7 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
         if ON_LIST.load(Ordering::Relaxed)
             && let Some(w) = w.upgrade()
         {
+            update_hero(&w, &s.borrow());
             spawn_arrivals(&w, &s.borrow());
         }
     });

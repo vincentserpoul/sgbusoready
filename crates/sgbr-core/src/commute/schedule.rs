@@ -11,6 +11,39 @@ pub fn active_commutes_at(commutes: &[Commute], now: OffsetDateTime) -> Vec<&Com
     commutes.iter().filter(|c| c.is_active_at(now)).collect()
 }
 
+/// At-a-glance status for the home-screen header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeroStatus {
+    /// A commute window is open right now.
+    LiveNow { label: String },
+    /// The soonest upcoming commute and the minutes until its window opens.
+    Next { label: String, in_minutes: i64 },
+    /// No commutes, or none with an upcoming window.
+    Idle,
+}
+
+/// Pick the home-screen hero status: a live commute if one is open now, else the
+/// soonest upcoming commute with a countdown, else idle.
+#[must_use]
+pub fn hero_status(commutes: &[Commute], now: OffsetDateTime) -> HeroStatus {
+    if let Some(c) = active_commutes_at(commutes, now).first() {
+        return HeroStatus::LiveNow {
+            label: c.display_label(),
+        };
+    }
+    let soonest = commutes
+        .iter()
+        .filter_map(|c| c.next_window_start(now).map(|start| (c, start)))
+        .min_by_key(|(_, start)| *start);
+    match soonest {
+        Some((c, start)) => HeroStatus::Next {
+            label: c.display_label(),
+            in_minutes: (start - now).whole_minutes(),
+        },
+        None => HeroStatus::Idle,
+    }
+}
+
 /// The earliest moment any commute next changes state — the time the scheduler
 /// should set its next alarm for. `None` when the list is empty (or no commute
 /// has a valid boundary).
@@ -59,10 +92,42 @@ pub fn active_stop_plans(commutes: &[Commute], now: OffsetDateTime) -> Vec<StopP
 
 #[cfg(test)]
 mod tests {
-    use super::{active_commutes_at, next_alarm_at};
+    use super::{HeroStatus, active_commutes_at, hero_status, next_alarm_at};
     use crate::commute::model::{Commute, CommuteStop, TimeOfDay, Weekdays};
     use time::Weekday::{Monday, Tuesday};
     use time::macros::datetime;
+
+    #[test]
+    fn hero_live_when_a_window_is_open() {
+        let list = vec![morning(), evening()];
+        assert_eq!(
+            hero_status(&list, datetime!(2026-06-22 08:30:00 +8)),
+            HeroStatus::LiveNow {
+                label: "Opp Blk 123".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn hero_next_picks_soonest_with_countdown() {
+        // Monday 12:00: evening starts Monday 18:00 (in 6h), morning Tuesday 08:00.
+        let list = vec![morning(), evening()];
+        assert_eq!(
+            hero_status(&list, datetime!(2026-06-22 12:00:00 +8)),
+            HeroStatus::Next {
+                label: "Bef Clementi Stn".to_owned(),
+                in_minutes: 360,
+            }
+        );
+    }
+
+    #[test]
+    fn hero_idle_for_empty_list() {
+        assert_eq!(
+            hero_status(&[], datetime!(2026-06-22 12:00:00 +8)),
+            HeroStatus::Idle
+        );
+    }
 
     fn morning() -> Commute {
         Commute::new(
