@@ -3,36 +3,29 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- White front-bus on the red band; red route line + dots on the white strip.
-         Kept within the central safe zone (~x 34-74, y 30-92). -->
+    <!-- Top (red band): white side-view bus. Bottom (white base): black timeline
+         with three dots. All kept within the central safe zone. -->
     <!-- bus body -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M41,31 h26 a7,7 0 0 1 7,7 v20 a7,7 0 0 1 -7,7 h-26 a7,7 0 0 1 -7,-7 v-20 a7,7 0 0 1 7,-7 z" />
-    <!-- windshield (curved bottom) -->
+        android:pathData="M33,28 h42 a6,6 0 0 1 6,6 v14 a4,4 0 0 1 -4,4 h-46 a4,4 0 0 1 -4,-4 v-14 a6,6 0 0 1 6,-6 z" />
+    <!-- windows (red), three across -->
     <path
         android:fillColor="#E2231A"
-        android:pathData="M41,38 h26 v8 q-13,4 -26,0 z" />
-    <!-- headlights -->
+        android:pathData="M34,33 h12 v9 h-12 z M48,33 h12 v9 h-12 z M62,33 h11 v9 h-11 z" />
+    <!-- wheels (white) below the body with red hubs -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M42,52 m-5,0 a5,5 0 1 0 10,0 a5,5 0 1 0 -10,0 z M66,52 m-5,0 a5,5 0 1 0 10,0 a5,5 0 1 0 -10,0 z" />
     <path
         android:fillColor="#E2231A"
-        android:pathData="M43,52 h5 v3 h-5 z M60,52 h5 v3 h-5 z" />
-    <!-- front-on wheel bars -->
+        android:pathData="M42,52 m-2,0 a2,2 0 1 0 4,0 a2,2 0 1 0 -4,0 z M66,52 m-2,0 a2,2 0 1 0 4,0 a2,2 0 1 0 -4,0 z" />
+    <!-- bottom timeline (black) with three dots, in the white base, kept within
+         the masked safe zone (~y80). -->
     <path
-        android:fillColor="#E2231A"
-        android:pathData="M42,59 h8 v3 h-8 z M58,59 h8 v3 h-8 z" />
-    <!-- route line -->
+        android:fillColor="#111111"
+        android:pathData="M34,79 h40 v2 h-40 z" />
     <path
-        android:fillColor="#E2231A"
-        android:pathData="M36,84 h36 v2 h-36 z" />
-    <!-- route dots: two endpoints + a mid -->
-    <path
-        android:fillColor="#E2231A"
-        android:pathData="M36,85 m-4,0 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0 z" />
-    <path
-        android:fillColor="#E2231A"
-        android:pathData="M54,85 m-2.5,0 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0 z" />
-    <path
-        android:fillColor="#E2231A"
-        android:pathData="M72,85 m-4,0 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0 z" />
+        android:fillColor="#111111"
+        android:pathData="M34,80 m-3.5,0 a3.5,3.5 0 1 0 7,0 a3.5,3.5 0 1 0 -7,0 z M54,80 m-3.5,0 a3.5,3.5 0 1 0 7,0 a3.5,3.5 0 1 0 -7,0 z M74,80 m-3.5,0 a3.5,3.5 0 1 0 7,0 a3.5,3.5 0 1 0 -7,0 z" />
 </vector>
