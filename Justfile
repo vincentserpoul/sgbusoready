@@ -61,6 +61,16 @@ run-android: build-android
     adb install -r android/app/build/outputs/apk/debug/app-debug.apk
     adb shell am start -n com.sgbuscommute/.MainActivity
 
+# Run the worker locally against real LTA (needs .env: LTA_API_ACCOUNT_KEY)
+run-worker:
+    #!/usr/bin/env bash
+    set -euo pipefail; set -a; source .env; set +a
+    SGBR_ADMIN_TOKEN=${SGBR_ADMIN_TOKEN:-dev-admin} SGBR_DATA_DIR=target/worker-data \
+      cargo run -p sgbr-worker -- serve
+
+worker-invite:
+    SGBR_ADMIN_TOKEN=${SGBR_ADMIN_TOKEN:-dev-admin} cargo run -p sgbr-worker -- invite new
+
 # Run all tests with nextest
 test:
     cargo nextest run --workspace
