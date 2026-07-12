@@ -48,6 +48,7 @@ pub(crate) use generated::{
 mod android_bridge;
 mod catalog;
 mod editor;
+mod feed;
 mod hero;
 mod rows;
 
@@ -61,6 +62,8 @@ use std::time::Duration;
 use sgbr_core::bus_catalog::store as catalog_store;
 use sgbr_core::commute::model::{Commute, CommuteStop};
 use sgbr_core::commute::store::CommuteStore;
+use sgbr_core::error::CoreError;
+use sgbr_core::worker::credentials::WorkerCredentials;
 use slint::{ComponentHandle, Model, SharedString, Timer, TimerMode};
 use time::OffsetDateTime;
 use time::macros::offset;
@@ -70,20 +73,34 @@ use editor::{
     EditStopState, FormStops, populate_form, push_form_stops, read_weekdays, stop_services,
     time_of_day,
 };
+use feed::feed;
 use hero::update_hero;
-use rows::{rebuild_rows, spawn_arrivals};
+use rows::{rebuild_rows, refresh_arrivals};
 
 type Store = Rc<RefCell<CommuteStore>>;
 
-/// LTA `DataMall` `AccountKey`, injected at build time (empty if unset → no refresh).
-pub(crate) const ACCOUNT_KEY: &str = match option_env!("LTA_API_ACCOUNT_KEY") {
-    Some(k) => k,
+/// Worker base URL, injected at build time (empty if unset → no server
+/// configured, the invite screen reports it rather than trying to connect).
+pub(crate) const WORKER_URL: &str = match option_env!("SGBR_WORKER_URL") {
+    Some(u) => u,
     None => "",
 };
 
 /// Wall-clock "now" in Singapore time (UTC+8, no DST).
 pub(crate) fn now_sgt() -> OffsetDateTime {
     OffsetDateTime::now_utc().to_offset(offset!(+8))
+}
+
+/// Where worker device credentials are cached — `worker.json`, a sibling of
+/// the commute store (mirrors `catalog::catalog_path`'s idiom).
+pub(crate) fn credentials_path(store_path: &Path) -> PathBuf {
+    store_path.with_file_name("worker.json")
+}
+
+/// Load cached worker credentials, if any (missing/unreadable/corrupt → `None`
+/// — the caller falls back to the invite screen rather than erroring).
+pub(crate) fn load_credentials(path: &Path) -> Option<WorkerCredentials> {
+    sgbr_core::worker::credentials::load(path).ok()
 }
 
 /// Stash of the editor window so the native time-picker / back JNI callbacks can
@@ -94,6 +111,29 @@ static EDITOR_WINDOW: Mutex<Option<slint::Weak<AppWindow>>> = Mutex::new(None);
 /// Whether the list screen is showing (kept in sync from Slint), so the native
 /// Back handler knows whether to navigate to the list or let the app finish.
 static ON_LIST: AtomicBool = AtomicBool::new(true);
+
+thread_local! {
+    /// The "repaint from the store" closure, parked here (rather than
+    /// captured directly by the feed listener below) because it closes over
+    /// `Store` (`Rc<RefCell<CommuteStore>>`), which is `!Send` — but
+    /// `ArrivalsFeed::add_listener` and `slint::invoke_from_event_loop` both
+    /// require `Send` closures, since the feed calls listeners from its
+    /// background stream thread. Set once in `run_app`; the feed listener
+    /// (itself capture-free, so trivially `Send`) hops to the UI thread via
+    /// `invoke_from_event_loop` and, from there — safely on the same thread
+    /// this was set from — invokes it through the thread-local.
+    static ON_ARRIVALS_CHANGED: RefCell<Option<Box<dyn FnMut()>>> = RefCell::new(None);
+}
+
+/// Run the parked `ON_ARRIVALS_CHANGED` closure, if one has been set. Must
+/// only be called on the UI thread.
+fn run_arrivals_changed() {
+    ON_ARRIVALS_CHANGED.with(|cell| {
+        if let Some(f) = cell.borrow_mut().as_mut() {
+            f();
+        }
+    });
+}
 
 /// Open the native time picker for `tag` ("start"/"end"); no-op off Android.
 #[allow(
@@ -267,7 +307,7 @@ fn handle_save(window: &AppWindow, store: &Store, path: &Path, form_stops: &Form
     populate_form(window, None, -1, None, form_stops);
     rebuild_rows(window, &store.borrow());
     update_hero(window, &store.borrow());
-    spawn_arrivals(window, &store.borrow());
+    refresh_arrivals(window, &store.borrow(), path);
     window.set_screen(Screen::List);
 }
 
@@ -286,15 +326,42 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
 
     let window = AppWindow::new()?;
     let form_stops: FormStops = Rc::new(RefCell::new(Vec::new()));
+    let registered = load_credentials(&credentials_path(&store_path)).is_some();
+    window.set_registered(registered);
+    if !registered {
+        window.set_screen(Screen::Invite);
+    }
     rebuild_rows(&window, &store.borrow());
     update_hero(&window, &store.borrow());
     with_catalog(&catalog, |cat| {
         populate_form(&window, None, -1, cat, &form_stops);
     });
-    spawn_arrivals(&window, &store.borrow());
+    refresh_arrivals(&window, &store.borrow(), &store_path);
     maybe_start_service(&store.borrow());
     window.set_catalog_loading(with_catalog(&catalog, |c| c.is_none()));
     spawn_refresh_if_stale(&catalog, &window, &store_path);
+
+    // Park the store-capturing "repaint" closure for the feed listener below
+    // (see `ON_ARRIVALS_CHANGED`'s doc comment for why it can't be captured
+    // directly by a `Send` listener/event-loop closure).
+    let weak = window.as_weak();
+    let repaint_store = Rc::clone(&store);
+    let repaint_path = Rc::clone(&store_path);
+    ON_ARRIVALS_CHANGED.with(|cell| {
+        *cell.borrow_mut() = Some(Box::new(move || {
+            if let Some(w) = weak.upgrade() {
+                update_hero(&w, &repaint_store.borrow());
+                refresh_arrivals(&w, &repaint_store.borrow(), &repaint_path);
+            }
+        }));
+    });
+    // Event-driven repaint on top of the 15s timer below: every applied feed
+    // snapshot hops back to the UI thread and re-renders from the cache
+    // (still no network on this path). Both closures here are capture-free,
+    // so they trivially satisfy `Send`.
+    feed().add_listener(|| {
+        let _ = slint::invoke_from_event_loop(run_arrivals_changed);
+    });
 
     #[cfg(target_os = "android")]
     {
@@ -343,7 +410,7 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
             drop(store);
             rebuild_rows(&w, &s.borrow());
             update_hero(&w, &s.borrow());
-            spawn_arrivals(&w, &s.borrow());
+            refresh_arrivals(&w, &s.borrow(), &p);
         }
     });
 
@@ -447,20 +514,123 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
         }
     });
 
+    let w = window.as_weak();
+    let c = Arc::clone(&catalog);
+    let p = Rc::clone(&store_path);
+    window.on_register_invite(move |code| {
+        let Some(w) = w.upgrade() else {
+            return;
+        };
+        let trimmed = code.trim();
+        if trimmed.is_empty() {
+            w.set_invite_error(SharedString::from("enter an invite code"));
+            return;
+        }
+        if WORKER_URL.is_empty() {
+            w.set_invite_error(SharedString::from("no server configured in this build"));
+            return;
+        }
+        w.set_invite_busy(true);
+        w.set_invite_error(SharedString::new());
+        let weak = w.as_weak();
+        let catalog = Arc::clone(&c);
+        let store_path: PathBuf = (*p).clone();
+        let code = trimmed.to_owned();
+        std::thread::spawn(
+            move || match sgbr_core::worker::client::register(WORKER_URL, &code) {
+                Ok(creds) => {
+                    let _ = creds.save(&credentials_path(&store_path));
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = weak.upgrade() {
+                            w.set_invite_busy(false);
+                            w.set_invite_error(SharedString::new());
+                            w.set_registered(true);
+                            w.set_screen(Screen::List);
+                            spawn_refresh_if_stale(&catalog, &w, &store_path);
+                            run_arrivals_changed();
+                        }
+                    });
+                }
+                Err(err) => {
+                    let message = match err {
+                        CoreError::Auth(_) => "invite not accepted — check the code",
+                        CoreError::Http(_)
+                        | CoreError::Parse(_)
+                        | CoreError::NoArrival
+                        | CoreError::InvalidTimestamp(_)
+                        | CoreError::Io(_)
+                        | CoreError::Crypto(_) => "cannot reach the server",
+                    };
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = weak.upgrade() {
+                            w.set_invite_busy(false);
+                            w.set_invite_error(SharedString::from(message));
+                        }
+                    });
+                }
+            },
+        );
+    });
+
     // Refresh live arrivals on the list every 15s while a commute is active.
     let arrivals_timer = Timer::default();
     let w = window.as_weak();
     let s = Rc::clone(&store);
+    let p = Rc::clone(&store_path);
     arrivals_timer.start(TimerMode::Repeated, Duration::from_secs(15), move || {
         if ON_LIST.load(Ordering::Relaxed)
             && let Some(w) = w.upgrade()
         {
             update_hero(&w, &s.borrow());
-            spawn_arrivals(&w, &s.borrow());
+            refresh_arrivals(&w, &s.borrow(), &p);
         }
     });
 
     window.run()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use sgbr_core::worker::credentials::WorkerCredentials;
+
+    use super::{credentials_path, load_credentials};
+
+    #[test]
+    fn credentials_path_is_worker_json_beside_the_commute_store() {
+        let path = credentials_path(Path::new("/data/app/files/commutes.json"));
+        assert_eq!(path, Path::new("/data/app/files/worker.json"));
+    }
+
+    #[test]
+    fn credentials_save_then_load_round_trips_through_the_helper_path() {
+        let dir = std::env::temp_dir().join(format!("sgbr_app_creds_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store_path = dir.join("commutes.json");
+        let creds = WorkerCredentials {
+            token: "t".repeat(64),
+            device_id: "device-1".to_owned(),
+            secret_seed_b64: "c2VlZA==".to_owned(),
+            pubkey_b64: "cHVia2V5".to_owned(),
+        };
+        creds
+            .save(&credentials_path(&store_path))
+            .expect("save credentials");
+        let loaded = load_credentials(&credentials_path(&store_path))
+            .expect("credentials just saved must load");
+        assert_eq!(loaded, creds);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_credentials_missing_file_is_none() {
+        let path = std::env::temp_dir().join(format!(
+            "sgbr_app_creds_missing_{}/worker.json",
+            std::process::id()
+        ));
+        assert!(load_credentials(&path).is_none());
+    }
 }
 
 /// Android entry point.

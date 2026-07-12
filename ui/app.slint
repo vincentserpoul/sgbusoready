@@ -31,7 +31,7 @@ struct StopResult {
     road: string,
 }
 
-enum Screen { list, editor, search }
+enum Screen { list, editor, search, invite }
 
 export component AppWindow inherits Window {
     in property <[CommuteRow]> rows;
@@ -67,6 +67,12 @@ export component AppWindow inherits Window {
     in property <[StopResult]> search-results;
     in property <bool> catalog-loading;
 
+    // Invite / worker-registration state.
+    in-out property <string> invite-code;
+    in property <string> invite-error;
+    in property <bool> invite-busy;
+    in property <bool> registered;
+
     callback save();
     callback delete(int);
     callback edit(int);
@@ -77,6 +83,7 @@ export component AppWindow inherits Window {
     callback remove-stop(int);
     callback pick-time(string);
     callback screen-changed(bool);
+    callback register-invite(string);
 
     // Keep the native side informed which screen is showing (for Back handling).
     changed screen => {
@@ -123,6 +130,27 @@ export component AppWindow inherits Window {
                         overflow: elide;
                     }
                     Rectangle { horizontal-stretch: 1; }
+                }
+            }
+            // Not-yet-registered prompt: tap through to the invite screen.
+            if !root.registered: Rectangle {
+                border-radius: 14px;
+                background: Palette.hero;
+                border-width: 1px;
+                border-color: Palette.hairline;
+                HorizontalLayout {
+                    padding: 14px;
+                    Text {
+                        text: "Not connected — tap to enter invite code";
+                        font-size: Type.body;
+                        font-weight: 600;
+                        color: Palette.accent-warm;
+                        overflow: elide;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                TouchArea {
+                    clicked => { root.screen = Screen.invite; }
                 }
             }
             ScrollView {
@@ -407,6 +435,47 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+                }
+            }
+        }
+        }
+    }
+
+    // ---- Invite screen ----
+    Rectangle {
+        visible: root.screen == Screen.invite;
+        PhoneColumn {
+        VerticalLayout {
+            padding-top: root.top-inset;
+            AppBar {
+                title: "Connect";
+                show-back: true;
+                back => { root.screen = Screen.list; }
+            }
+            VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+                Text {
+                    text: "Enter the invite code your server gave you.";
+                    font-size: Type.body;
+                    color: Palette.text-dim;
+                    wrap: word-wrap;
+                }
+                TextField {
+                    placeholder: "Invite code";
+                    text <=> root.invite-code;
+                }
+                if root.invite-error != "": Text {
+                    text: root.invite-error;
+                    color: Palette.danger;
+                    font-size: Type.caption;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: 6px; }
+                PrimaryButton {
+                    text: root.invite-busy ? "Connecting…" : "Connect";
+                    enabled: !root.invite-busy;
+                    clicked => { root.register-invite(root.invite-code); }
                 }
             }
         }

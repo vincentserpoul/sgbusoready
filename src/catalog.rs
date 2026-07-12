@@ -10,12 +10,12 @@ use std::sync::{Arc, Mutex};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use time::OffsetDateTime;
 
-use sgbr_core::bus_catalog::fetch::fetch_catalog;
 use sgbr_core::bus_catalog::model::BusCatalog;
 use sgbr_core::bus_catalog::search::search as catalog_search;
 use sgbr_core::bus_catalog::store as catalog_store;
+use sgbr_core::worker::client::{WorkerConfig, fetch_catalog};
 
-use crate::{ACCOUNT_KEY, AppWindow, StopResult, now_sgt};
+use crate::{AppWindow, StopResult, WORKER_URL, credentials_path, load_credentials, now_sgt};
 
 /// Catalog is shared with a background refresh thread, so it's `Arc<Mutex>`.
 pub type Catalog = Arc<Mutex<Option<BusCatalog>>>;
@@ -53,12 +53,13 @@ pub fn refresh_search(window: &AppWindow, catalog: &Catalog) {
     window.set_catalog_loading(with_catalog(catalog, |c| c.is_none()));
 }
 
-/// If the catalog is missing or stale (and a key is compiled in), fetch a fresh
-/// one on a background thread, persist it, swap it in, and refresh the UI.
+/// If the catalog is missing or stale (and worker credentials are available),
+/// fetch a fresh one from the worker on a background thread, persist it, swap
+/// it in, and refresh the UI.
 pub fn spawn_refresh_if_stale(catalog: &Catalog, window: &AppWindow, store_path: &Path) {
-    if ACCOUNT_KEY.is_empty() {
+    let Some(creds) = load_credentials(&credentials_path(store_path)) else {
         return;
-    }
+    };
     let now = now_sgt();
     let needs = with_catalog(catalog, |c| c.is_none_or(|k| k.is_stale(now)));
     if !needs {
@@ -67,8 +68,12 @@ pub fn spawn_refresh_if_stale(catalog: &Catalog, window: &AppWindow, store_path:
     let catalog = Arc::clone(catalog);
     let weak = window.as_weak();
     let cat_path = catalog_path(store_path);
+    let cfg = WorkerConfig {
+        base_url: WORKER_URL.to_owned(),
+        token: creds.token,
+    };
     std::thread::spawn(move || {
-        let Ok(fresh) = fetch_catalog(ACCOUNT_KEY, OffsetDateTime::now_utc()) else {
+        let Ok(fresh) = fetch_catalog(&cfg, OffsetDateTime::now_utc()) else {
             return;
         };
         let _ = catalog_store::save(&fresh, &cat_path);

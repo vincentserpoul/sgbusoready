@@ -1,16 +1,23 @@
 //! List rows and timeline lanes: building the Slint `CommuteRow`/`StopLane`
-//! models, synchronously (skeletons) and from live arrivals (off-thread fetch).
+//! models, synchronously from the process-global arrivals feed (`feed.rs`) —
+//! no network on the UI thread.
 
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+use std::path::Path;
+
+use slint::{ModelRc, SharedString, VecModel};
 use time::OffsetDateTime;
 
 use sgbr_core::commute::display::{format_next_time, format_timeline_labels};
 use sgbr_core::commute::model::Commute;
+use sgbr_core::commute::schedule::active_stop_plans;
 use sgbr_core::commute::store::CommuteStore;
-use sgbr_core::lta::arrival::{StopArrivals, stop_arrivals};
-use sgbr_core::lta::client::fetch_arrivals;
+use sgbr_core::lta::arrival::{ArrivalItem, StopArrivals};
 
-use crate::{ACCOUNT_KEY, AppWindow, ArrivalTag, CommuteRow, StopLane, now_sgt};
+use crate::feed::feed;
+use crate::{
+    AppWindow, ArrivalTag, CommuteRow, StopLane, WORKER_URL, credentials_path, load_credentials,
+    now_sgt,
+};
 
 /// Card label: the commute's own label, or its first stop's name (+N).
 fn card_label(commute: &Commute) -> String {
@@ -91,39 +98,45 @@ pub fn rebuild_rows(window: &AppWindow, store: &CommuteStore) {
     window.set_rows(ModelRc::new(VecModel::from(rows)));
 }
 
-/// Plain, `Send` row data computed off the UI thread; converted to the Slint
-/// `CommuteRow` (which holds non-`Send` `ModelRc`s) back on the UI thread.
-struct RowData {
-    label: String,
-    active: bool,
-    index: i32,
-    stops: Vec<StopArrivals>,
-    scale: i32,
-    start_label: String,
-    end_label: String,
-    days: Vec<bool>,
-    today: i32,
-    next_time: String,
-    counts: String,
+/// Keep only the arrival groups (and, within each group, the buses) that are
+/// in `tracked`; drop a group left with no buses after filtering. Order is
+/// preserved (the feed's snapshots are already ascending by minute).
+fn filter_items(items: &[ArrivalItem], tracked: &[String]) -> Vec<ArrivalItem> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let buses: Vec<String> = item
+                .buses
+                .iter()
+                .filter(|b| tracked.contains(b))
+                .cloned()
+                .collect();
+            if buses.is_empty() {
+                None
+            } else {
+                Some(ArrivalItem {
+                    minutes: item.minutes,
+                    buses,
+                })
+            }
+        })
+        .collect()
 }
 
-/// Fetch each stop's arrivals for one active commute (blocking; off-UI only) and
-/// the commute's fixed timeline scale. One `fetch_arrivals` per stop, filtered to
-/// buses.
-fn commute_stop_arrivals(commute: &Commute, now: OffsetDateTime) -> (Vec<StopArrivals>, i32) {
-    let mut all: Vec<StopArrivals> = Vec::new();
-    for stop in &commute.stops {
-        let arrivals = match fetch_arrivals(ACCOUNT_KEY, &stop.code) {
-            Ok(resp) => stop_arrivals(&stop.code, &stop.name, &stop.buses, &resp, now),
-            Err(_) => StopArrivals {
-                code: stop.code.clone(),
-                name: stop.name.clone(),
-                items: Vec::new(),
-            },
-        };
-        all.push(arrivals);
-    }
-    (all, i32::from(commute.scale_minutes()))
+/// Build one active commute's stop lanes from the feed's cached snapshots
+/// (no network — the feed's background stream thread keeps them warm), each
+/// filtered down to the buses that commute-stop actually tracks.
+fn commute_stop_arrivals_from_feed(commute: &Commute) -> (Vec<StopArrivals>, i32) {
+    let stops: Vec<StopArrivals> = commute
+        .stops
+        .iter()
+        .map(|stop| StopArrivals {
+            code: stop.code.clone(),
+            name: stop.name.clone(),
+            items: filter_items(&feed().items_for(&stop.code), &stop.buses),
+        })
+        .collect();
+    (stops, i32::from(commute.scale_minutes()))
 }
 
 /// Assign each arrival a stagger row so pills that would overlap horizontally are
@@ -206,74 +219,85 @@ fn lanes_model(
     ModelRc::new(VecModel::from(lanes))
 }
 
-/// For each active commute, fetch live arrivals on a background thread and
-/// replace the list rows with timeline lanes (no-op without a key / when none
-/// are active). Inactive rows keep their summary line.
-pub fn spawn_arrivals(window: &AppWindow, store: &CommuteStore) {
-    if ACCOUNT_KEY.is_empty() {
-        return;
-    }
+/// Recompute the desired stop/bus subscription set from the active commutes
+/// and hand it to the arrivals feed, then rebuild every list row from the
+/// feed's cached snapshots — synchronously, on the UI thread. No network
+/// happens here: `feed().set_plans` only (re)starts/reconnects the
+/// background stream thread when the plan actually changes; reading the
+/// cache back is a couple of `HashMap` lookups.
+pub fn refresh_arrivals(window: &AppWindow, store: &CommuteStore, store_path: &Path) {
     let now = now_sgt();
-    if !store.commutes.iter().any(|c| c.is_active_at(now)) {
-        return;
-    }
-    let commutes = store.commutes.clone();
-    let weak = window.as_weak();
-    std::thread::spawn(move || {
-        let now = now_sgt();
-        let today = i32::from(now.weekday().number_days_from_monday());
-        let mut data: Vec<RowData> = Vec::new();
-        for (i, c) in commutes.iter().enumerate() {
-            let active = c.is_active_at(now);
-            let (stops, scale) = if active {
-                commute_stop_arrivals(c, now)
-            } else {
-                (Vec::new(), i32::from(c.scale_minutes()))
-            };
-            let (start_label, end_label) = if active {
-                format_timeline_labels(now, c.scale_minutes())
-            } else {
-                (String::new(), String::new())
-            };
-            data.push(RowData {
-                label: card_label(c),
-                active,
-                index: i32::try_from(i).unwrap_or(-1),
-                stops,
-                scale,
-                start_label,
-                end_label,
-                days: day_flags(c),
-                today,
-                next_time: next_time_line(c, now),
-                counts: counts_line(c),
-            });
-        }
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(w) = weak.upgrade() {
-                let rows: Vec<CommuteRow> = data
-                    .into_iter()
-                    .map(|d| CommuteRow {
-                        label: SharedString::from(d.label),
-                        active: d.active,
-                        index: d.index,
-                        lanes: lanes_model(&d.stops, d.scale, &d.start_label, &d.end_label),
-                        scale_max: d.scale,
-                        days: ModelRc::new(VecModel::from(d.days)),
-                        today: d.today,
-                        next_time: SharedString::from(d.next_time),
-                        counts: SharedString::from(d.counts),
-                    })
-                    .collect();
-                w.set_rows(ModelRc::new(VecModel::from(rows)));
-            }
+    let plans = active_stop_plans(&store.commutes, now);
+    let creds = load_credentials(&credentials_path(store_path));
+    feed().set_plans(plans, creds.as_ref(), WORKER_URL);
+
+    let today = i32::from(now.weekday().number_days_from_monday());
+    let mut rows: Vec<CommuteRow> = Vec::new();
+    for (i, c) in store.commutes.iter().enumerate() {
+        let active = c.is_active_at(now);
+        let (stops, scale) = if active {
+            commute_stop_arrivals_from_feed(c)
+        } else {
+            (Vec::new(), i32::from(c.scale_minutes()))
+        };
+        let (start_label, end_label) = if active {
+            format_timeline_labels(now, c.scale_minutes())
+        } else {
+            (String::new(), String::new())
+        };
+        rows.push(CommuteRow {
+            label: SharedString::from(card_label(c)),
+            active,
+            index: i32::try_from(i).unwrap_or(-1),
+            lanes: lanes_model(&stops, scale, &start_label, &end_label),
+            scale_max: scale,
+            days: ModelRc::new(VecModel::from(day_flags(c))),
+            today,
+            next_time: SharedString::from(next_time_line(c, now)),
+            counts: SharedString::from(counts_line(c)),
         });
-    });
+    }
+    window.set_rows(ModelRc::new(VecModel::from(rows)));
 }
 
 #[cfg(test)]
 mod tests {
-    use super::stagger_rows;
+    use super::{ArrivalItem, filter_items, stagger_rows};
+
+    fn item(minutes: i64, buses: &[&str]) -> ArrivalItem {
+        ArrivalItem {
+            minutes,
+            buses: buses.iter().map(|b| (*b).to_owned()).collect(),
+        }
+    }
+
+    fn owned(buses: &[&str]) -> Vec<String> {
+        buses.iter().map(|b| (*b).to_owned()).collect()
+    }
+
+    #[test]
+    fn filter_items_keeps_only_tracked_buses_within_each_group() {
+        let items = vec![item(3, &["14", "15"]), item(9, &["16"])];
+        let filtered = filter_items(&items, &owned(&["15"]));
+        assert_eq!(filtered, vec![item(3, &["15"])]);
+    }
+
+    #[test]
+    fn filter_items_drops_a_group_left_with_no_tracked_buses() {
+        let items = vec![item(3, &["14"]), item(9, &["15"])];
+        let filtered = filter_items(&items, &owned(&["15"]));
+        assert_eq!(filtered, vec![item(9, &["15"])]);
+    }
+
+    #[test]
+    fn filter_items_preserves_order() {
+        let items = vec![item(3, &["15"]), item(9, &["16"]), item(20, &["15"])];
+        let filtered = filter_items(&items, &owned(&["15", "16"]));
+        assert_eq!(
+            filtered,
+            vec![item(3, &["15"]), item(9, &["16"]), item(20, &["15"])]
+        );
+    }
 
     #[test]
     fn well_spread_arrivals_share_the_bottom_row() {
