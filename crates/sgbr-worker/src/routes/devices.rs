@@ -2,6 +2,7 @@
 
 use axum::Json;
 use axum::extract::State;
+use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -17,8 +18,12 @@ const SIGNATURE_LEN: usize = 64;
 
 pub async fn register(
     State(state): State<AppState>,
-    Json(req): Json<RegisterRequest>,
+    body: Result<Json<RegisterRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<RegisterResponse>), ApiError> {
+    // Fold axum's built-in Json rejection (syntactically invalid JSON, wrong
+    // field types, missing/invalid content-type) into ApiError so even those
+    // failures keep the `{"error": "<msg>"}` envelope.
+    let Json(req) = body.map_err(|rejection| ApiError::BadRequest(rejection.body_text()))?;
     validate_shape(&req)?;
     if !verify_registration(&req.pubkey, &req.invite_code, &req.signature) {
         return Err(ApiError::Forbidden("registration rejected".to_owned()));
@@ -243,8 +248,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Read the response body and assert it is the `{"error": "<msg>"}`
+    /// envelope every failure must use; returns the `error` message.
+    async fn assert_error_envelope(response: axum::response::Response) -> String {
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("read body")
+            .to_bytes();
+        let body: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("error body must be JSON");
+        body.get("error")
+            .and_then(|v| v.as_str())
+            .expect("error body must have a string `error` field")
+            .to_owned()
+    }
+
     #[tokio::test]
-    async fn malformed_json_body_is_400() {
+    async fn malformed_json_body_is_400_with_error_envelope() {
         let (state, dir) = tmp_state("malformed-json");
         let response = router(state)
             .oneshot(
@@ -258,6 +280,30 @@ mod tests {
             .await
             .expect("router response");
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let message = assert_error_envelope(response).await;
+        assert!(!message.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn wrong_typed_field_is_400_with_error_envelope() {
+        let (state, dir) = tmp_state("wrong-typed-field");
+        // Syntactically valid JSON, but `pubkey` is a number, not a string.
+        let body = r#"{"invite_code":"ABCD2345","pubkey":42,"signature":"AAAA"}"#;
+        let response = router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/devices")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .expect("build request"),
+            )
+            .await
+            .expect("router response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let message = assert_error_envelope(response).await;
+        assert!(!message.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
