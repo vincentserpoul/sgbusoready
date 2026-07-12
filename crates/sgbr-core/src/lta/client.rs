@@ -38,6 +38,21 @@ pub fn fetch_arrivals(
         .timeout_global(Some(REQUEST_TIMEOUT))
         .build();
     let agent = Agent::new_with_config(config);
+    fetch_arrivals_with_agent(&agent, account_key, bus_stop_code)
+}
+
+/// Fetch and parse live arrivals for `bus_stop_code`, on a caller-supplied
+/// `agent` — lets a caller fetching many stops (e.g. the worker's polling
+/// loop) reuse one connection pool instead of paying reconnect cost per stop.
+///
+/// # Errors
+/// Returns [`CoreError::Http`] on transport/status failure and
+/// [`CoreError::Parse`] when the body is not the expected JSON.
+pub fn fetch_arrivals_with_agent(
+    agent: &Agent,
+    account_key: &str,
+    bus_stop_code: &str,
+) -> Result<BusArrivalResponse, CoreError> {
     let url = arrival_url(BUS_ARRIVAL_URL, bus_stop_code);
     let body = agent
         .get(&url)
