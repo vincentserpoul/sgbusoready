@@ -24,6 +24,15 @@ pub enum CoreError {
     /// A filesystem operation on the persisted store failed.
     #[error("io failed: {0}")]
     Io(String),
+
+    /// Worker registration or a subsequent authenticated call was rejected
+    /// (bad/used/unknown invite code, revoked token, ...).
+    #[error("worker auth failed: {0}")]
+    Auth(String),
+
+    /// A cryptographic operation (keygen, signing) failed.
+    #[error("crypto operation failed: {0}")]
+    Crypto(String),
 }
 
 #[cfg(test)]

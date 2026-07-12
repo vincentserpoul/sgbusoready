@@ -5,3 +5,4 @@ pub mod bus_catalog;
 pub mod commute;
 pub mod error;
 pub mod lta;
+pub mod worker;
