@@ -8,6 +8,7 @@ license = "GPL-3.0-only"
 workspace = true
 
 [dependencies]
+async-stream = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
 clap = { workspace = true }
@@ -19,10 +20,12 @@ sha2 = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
+tokio-stream = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 ureq = { workspace = true }
 
 [dev-dependencies]
 http-body-util = "0.1"
+tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }

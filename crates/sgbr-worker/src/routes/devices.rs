@@ -76,6 +76,7 @@ mod tests {
     use super::super::router;
     use crate::catalog::CatalogCache;
     use crate::config::Config;
+    use crate::registry::test_registry;
     use crate::state::AppState;
     use crate::store::DeviceStore;
     use axum::body::Body;
@@ -107,6 +108,7 @@ mod tests {
             Arc::new(config),
             Arc::new(store),
             Arc::new(CatalogCache::empty()),
+            test_registry(),
         );
         (state, dir)
     }

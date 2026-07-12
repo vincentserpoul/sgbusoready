@@ -23,11 +23,11 @@ pub async fn healthz(State(state): State<AppState>) -> Json<HealthBody> {
         }
         None => None,
     };
+    let active_stops = u32::try_from(state.registry().active_stops()).unwrap_or(u32::MAX);
     Json(HealthBody {
         status: "ok",
         catalog_age_secs,
-        // Hardcoded until Phase 2 wires the SSE registry.
-        active_stops: 0,
+        active_stops,
         version: env!("CARGO_PKG_VERSION"),
     })
 }
@@ -37,6 +37,7 @@ mod tests {
     use super::super::router;
     use crate::catalog::CatalogCache;
     use crate::config::Config;
+    use crate::registry::test_registry;
     use crate::state::AppState;
     use crate::store::DeviceStore;
     use axum::body::Body;
@@ -45,10 +46,11 @@ mod tests {
     use std::sync::Arc;
     use tower::ServiceExt as _;
 
-    #[tokio::test]
-    async fn healthz_is_200_without_auth() {
-        let dir =
-            std::env::temp_dir().join(format!("sgbr_worker_healthz_test_{}", std::process::id()));
+    fn tmp_state(name: &str) -> (AppState, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "sgbr_worker_healthz_test_{}_{name}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create tmp dir");
         let store = DeviceStore::load_or_default(dir.join("store.json")).expect("load store");
@@ -63,8 +65,12 @@ mod tests {
             Arc::new(config),
             Arc::new(store),
             Arc::new(CatalogCache::empty()),
+            test_registry(),
         );
+        (state, dir)
+    }
 
+    async fn healthz_body(state: AppState) -> serde_json::Value {
         let response = router(state)
             .oneshot(
                 Request::builder()
@@ -81,10 +87,29 @@ mod tests {
             .await
             .expect("read body")
             .to_bytes();
-        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("parse body");
+        serde_json::from_slice(&bytes).expect("parse body")
+    }
+
+    #[tokio::test]
+    async fn healthz_is_200_without_auth() {
+        let (state, dir) = tmp_state("plain");
+        let body = healthz_body(state).await;
         assert_eq!(body["status"], "ok");
         assert_eq!(body["active_stops"], 0);
         assert!(body["catalog_age_secs"].is_null());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn healthz_reports_live_active_stops() {
+        let (state, dir) = tmp_state("active-stops");
+        let sub = state.registry().subscribe("83139");
+        let body = healthz_body(state.clone()).await;
+        assert_eq!(body["active_stops"], 1);
+
+        drop(sub);
+        let body_after = healthz_body(state).await;
+        assert_eq!(body_after["active_stops"], 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -4,15 +4,17 @@ use std::sync::Arc;
 
 use crate::catalog::CatalogCache;
 use crate::config::Config;
+use crate::registry::Registry;
 use crate::store::DeviceStore;
 
 /// Cheaply cloneable handle to the worker's shared state (each field is an
-/// `Arc`). The SSE registry joins this in Phase 2.
+/// `Arc`).
 #[derive(Debug, Clone)]
 pub struct AppState {
     config: Arc<Config>,
     store: Arc<DeviceStore>,
     catalog: Arc<CatalogCache>,
+    registry: Arc<Registry>,
 }
 
 impl AppState {
@@ -21,11 +23,13 @@ impl AppState {
         config: Arc<Config>,
         store: Arc<DeviceStore>,
         catalog: Arc<CatalogCache>,
+        registry: Arc<Registry>,
     ) -> Self {
         Self {
             config,
             store,
             catalog,
+            registry,
         }
     }
 
@@ -42,5 +46,13 @@ impl AppState {
     #[must_use]
     pub fn catalog(&self) -> &CatalogCache {
         &self.catalog
+    }
+
+    /// The refcounted arrivals-polling registry. Returned as `&Arc<Registry>`
+    /// (not `&Registry`) because `Registry::subscribe` needs an `Arc` handle
+    /// to hand back to each `Subscription` for its `Drop` teardown.
+    #[must_use]
+    pub const fn registry(&self) -> &Arc<Registry> {
+        &self.registry
     }
 }

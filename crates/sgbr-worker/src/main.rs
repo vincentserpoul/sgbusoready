@@ -6,6 +6,7 @@ mod auth;
 mod catalog;
 mod config;
 mod error;
+mod registry;
 mod routes;
 mod state;
 mod store;
@@ -16,6 +17,7 @@ use clap::{Parser, Subcommand};
 
 use catalog::CatalogCache;
 use config::Config;
+use registry::{ArrivalFetcher, LtaFetcher, Registry};
 use state::AppState;
 use store::DeviceStore;
 
@@ -92,10 +94,18 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let bind = config.bind.clone();
     let data_dir = config.data_dir.clone();
     let account_key = config.lta_account_key.clone();
+    let poll_interval = std::time::Duration::from_secs(config.poll_secs);
 
     let store = DeviceStore::load_or_default(data_dir.join("store.json"))?;
     let catalog = Arc::new(CatalogCache::load_or_empty(&data_dir));
-    let state = AppState::new(Arc::new(config), Arc::new(store), Arc::clone(&catalog));
+    let fetcher: Arc<dyn ArrivalFetcher> = Arc::new(LtaFetcher::new(account_key.clone()));
+    let registry = Registry::new(fetcher, poll_interval);
+    let state = AppState::new(
+        Arc::new(config),
+        Arc::new(store),
+        Arc::clone(&catalog),
+        registry,
+    );
 
     tokio::spawn(catalog::run_refresh_loop(catalog, account_key, data_dir));
 

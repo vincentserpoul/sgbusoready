@@ -20,6 +20,7 @@ members = ["crates/sgbr-core", "crates/sgbr-worker"]
 
 [workspace.dependencies]
 # Shared across crates — extended as the implementation plan lands.
+async-stream = "0.3"
 axum = "0.8"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
@@ -31,6 +32,7 @@ sha2 = "0.10"
 thiserror = "2.0"
 time = { version = "0.3", features = ["parsing", "formatting", "macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ureq = { version = "3.0", features = ["json"] }

@@ -1,7 +1,7 @@
-//! Axum router assembly. The arrivals SSE route (`GET /v1/arrivals`) lands in
-//! Phase 2.
+//! Axum router assembly.
 
 pub mod admin;
+pub mod arrivals;
 pub mod catalog;
 pub mod devices;
 pub mod health;
@@ -15,6 +15,7 @@ use crate::state::AppState;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/devices", post(devices::register))
+        .route("/v1/arrivals", get(arrivals::arrivals))
         .route("/v1/bus-stops", get(catalog::bus_stops))
         .route("/v1/bus-routes", get(catalog::bus_routes))
         .route("/v1/healthz", get(health::healthz))

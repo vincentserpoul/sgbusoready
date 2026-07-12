@@ -78,6 +78,7 @@ mod tests {
     use super::super::router;
     use crate::catalog::CatalogCache;
     use crate::config::Config;
+    use crate::registry::test_registry;
     use crate::state::AppState;
     use crate::store::DeviceStore;
     use axum::body::Body;
@@ -137,7 +138,12 @@ mod tests {
             poll_secs: 15,
         };
         let cache = catalog.map_or_else(CatalogCache::empty, CatalogCache::with_catalog);
-        let state = AppState::new(Arc::new(config), Arc::new(store), Arc::new(cache));
+        let state = AppState::new(
+            Arc::new(config),
+            Arc::new(store),
+            Arc::new(cache),
+            test_registry(),
+        );
         (state, token, dir)
     }
 
