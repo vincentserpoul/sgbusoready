@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -113,7 +114,7 @@ mod tests {
 /// One bus-stop's upcoming arrivals, soonest-first, with buses arriving at the
 /// same whole minute grouped together. Drives both the in-app per-stop timeline
 /// and the Live Update notification line.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StopArrivals {
     /// LTA bus stop code.
     pub code: String,
@@ -124,7 +125,7 @@ pub struct StopArrivals {
 }
 
 /// One arrival group: every tracked bus arriving at the same whole minute.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArrivalItem {
     /// Whole-minute countdown (0 = due). Never negative.
     pub minutes: i64,
@@ -132,17 +133,17 @@ pub struct ArrivalItem {
     pub buses: Vec<String>,
 }
 
-/// Build a [`StopArrivals`] for `code`/`name` from `response`, keeping only the
-/// services in `tracked`, dropping past (negative-minute) arrivals, and grouping
-/// same-minute buses. Items are sorted ascending by minute.
+/// Build the arrival groups for the services in `tracked`, dropping past
+/// (negative-minute) arrivals and grouping same-minute buses, ascending by
+/// minute. The stop-agnostic core of [`stop_arrivals`] — also what the
+/// worker's SSE push path computes per stop (it has no display name to
+/// attach, only a stop code and a `data` payload).
 #[must_use]
-pub fn stop_arrivals(
-    code: &str,
-    name: &str,
+pub fn arrival_items(
     tracked: &[String],
     response: &BusArrivalResponse,
     now: OffsetDateTime,
-) -> StopArrivals {
+) -> Vec<ArrivalItem> {
     let mut by_minute: BTreeMap<i64, Vec<String>> = BTreeMap::new();
     for svc in &response.services {
         if !tracked.iter().any(|t| t == &svc.service_no) {
@@ -162,20 +163,33 @@ pub fn stop_arrivals(
             }
         }
     }
-    let items = by_minute
+    by_minute
         .into_iter()
         .map(|(minutes, buses)| ArrivalItem { minutes, buses })
-        .collect();
+        .collect()
+}
+
+/// Build a [`StopArrivals`] for `code`/`name` from `response`, keeping only the
+/// services in `tracked`, dropping past (negative-minute) arrivals, and grouping
+/// same-minute buses. Items are sorted ascending by minute.
+#[must_use]
+pub fn stop_arrivals(
+    code: &str,
+    name: &str,
+    tracked: &[String],
+    response: &BusArrivalResponse,
+    now: OffsetDateTime,
+) -> StopArrivals {
     StopArrivals {
         code: code.to_owned(),
         name: name.to_owned(),
-        items,
+        items: arrival_items(tracked, response, now),
     }
 }
 
 #[cfg(test)]
 mod stop_arrivals_tests {
-    use super::{ArrivalItem, stop_arrivals};
+    use super::{ArrivalItem, arrival_items, stop_arrivals};
     use crate::lta::model::BusArrivalResponse;
     use time::macros::datetime;
 
@@ -262,6 +276,16 @@ mod stop_arrivals_tests {
         let tracked = vec!["77".to_owned()];
         let out = stop_arrivals("83139", "Opp Blk 123", &tracked, &resp, now);
         assert!(out.items.is_empty());
+    }
+
+    #[test]
+    fn arrival_items_matches_stop_arrivals_items() {
+        let resp: BusArrivalResponse = serde_json::from_str(SAMPLE).expect("parse");
+        let now = datetime!(2026-06-21 08:10:00 +8);
+        let tracked = vec!["14".to_owned(), "14e".to_owned()];
+        let items = arrival_items(&tracked, &resp, now);
+        let stop = stop_arrivals("83139", "Opp Blk 123", &tracked, &resp, now);
+        assert_eq!(items, stop.items);
     }
 }
 
