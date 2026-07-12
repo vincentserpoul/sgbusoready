@@ -8,10 +8,10 @@
 //! `tests/client_stream.rs`. No behavior lives here beyond re-exporting the
 //! module tree `main.rs` used to own directly.
 
-pub mod auth;
+mod auth;
 pub mod catalog;
 pub mod config;
-pub mod error;
+mod error;
 pub mod registry;
 pub mod routes;
 pub mod state;
