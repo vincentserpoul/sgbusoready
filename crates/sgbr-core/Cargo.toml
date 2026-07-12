@@ -4,10 +4,20 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
 
+# Direct `DataMall` access (`lta::client`, `bus_catalog::fetch`). Off by
+# default: the shipped app talks to the worker instead (see
+# docs/superpowers/specs/2026-07-12-backend-worker-design.md). Kept for local
+# development and for the worker crate's own upstream fetch.
+[features]
+lta-upstream = []
+
 [lints]
 workspace = true
 
 [dependencies]
+base64 = { workspace = true }
+ed25519-dalek = { workspace = true }
+getrandom = { workspace = true }
 nucleo-matcher = "0.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -17,3 +27,7 @@ ureq = { workspace = true }
 
 [dev-dependencies]
 time = { workspace = true }
+
+[[example]]
+name = "live_fetch"
+required-features = ["lta-upstream"]

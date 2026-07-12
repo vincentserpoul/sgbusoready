@@ -20,6 +20,9 @@ members = ["crates/sgbr-core"]
 
 [workspace.dependencies]
 # Shared across crates — extended as the implementation plan lands.
+base64 = "0.22"
+ed25519-dalek = "2"
+getrandom = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
@@ -58,7 +61,9 @@ crate-type = ["rlib", "cdylib"]
 workspace = true
 
 [dependencies]
-sgbr-core = { workspace = true }
+# TODO(phase-4): drop `lta-upstream` once the app talks to the worker instead
+# of `DataMall` directly; `sgbr-core` defaults it off (see backend-worker spec).
+sgbr-core = { workspace = true, features = ["lta-upstream"] }
 slint = "1.17"
 time = { workspace = true }
 serde_json = { workspace = true }
