@@ -68,9 +68,7 @@ crate-type = ["rlib", "cdylib"]
 workspace = true
 
 [dependencies]
-# TODO(phase-4): drop `lta-upstream` once the app talks to the worker instead
-# of `DataMall` directly; `sgbr-core` defaults it off (see backend-worker spec).
-sgbr-core = { workspace = true, features = ["lta-upstream"] }
+sgbr-core = { workspace = true }
 slint = "1.17"
 time = { workspace = true }
 serde_json = { workspace = true }
