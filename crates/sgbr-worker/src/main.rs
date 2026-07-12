@@ -2,24 +2,16 @@
 //! and serves device registration, the bus catalog, and admin endpoints. The
 //! arrivals SSE stream lands in Phase 2.
 
-mod auth;
-mod catalog;
-mod config;
-mod error;
-mod registry;
-mod routes;
-mod state;
-mod store;
-
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
-use catalog::CatalogCache;
-use config::Config;
-use registry::{ArrivalFetcher, LtaFetcher, Registry};
-use state::AppState;
-use store::DeviceStore;
+use sgbr_worker::catalog::{self, CatalogCache};
+use sgbr_worker::config::Config;
+use sgbr_worker::registry::{ArrivalFetcher, LtaFetcher, Registry};
+use sgbr_worker::routes;
+use sgbr_worker::state::AppState;
+use sgbr_worker::store::DeviceStore;
 
 const DEFAULT_ADMIN_URL: &str = "http://127.0.0.1:8080";
 
