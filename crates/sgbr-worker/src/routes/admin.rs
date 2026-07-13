@@ -1,5 +1,5 @@
 //! Admin endpoints: invite mint/list, device list/revoke. Every handler is
-//! gated by the [`crate::auth::Admin`] extractor (`X-Admin-Token`).
+//! gated by the `crate::auth::Admin` extractor (`X-Admin-Token`).
 
 use axum::Json;
 use axum::extract::{Path, State};

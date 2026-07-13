@@ -50,7 +50,7 @@ pub struct StopsQuery {
 /// Parse the `stops` query value: `stop *("," stop)`, `stop = CODE ":" SVC
 /// *("." SVC)`. `CODE` is exactly 5 ASCII digits; `SVC` is 1-6 alphanumeric
 /// chars. 1-16 stops, 1-20 services per stop. Any violation is a
-/// [`ApiError::BadRequest`].
+/// `ApiError::BadRequest`.
 pub fn parse_stops(q: &str) -> Result<Vec<StopSpec>, ApiError> {
     if q.trim().is_empty() {
         return Err(ApiError::BadRequest("stops must not be empty".to_owned()));

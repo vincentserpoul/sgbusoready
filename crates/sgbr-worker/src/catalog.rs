@@ -69,7 +69,7 @@ const fn is_stale(catalog: &BusCatalog, now: OffsetDateTime) -> bool {
 
 /// Runs forever: on an empty or >24h-stale cache, fetch a fresh catalog from
 /// LTA on a blocking thread, persist it to disk, and swap it into `cache`.
-/// Sleeps [`REFRESH_CHECK_INTERVAL`] between checks; the first check runs
+/// Sleeps `REFRESH_CHECK_INTERVAL` between checks; the first check runs
 /// immediately. Fetch failures are logged and the previous value is kept.
 pub async fn run_refresh_loop(cache: Arc<CatalogCache>, account_key: String, data_dir: PathBuf) {
     let catalog_path = data_dir.join(CATALOG_FILE_NAME);
