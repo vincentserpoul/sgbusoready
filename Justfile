@@ -1,3 +1,8 @@
+# GHCR image ref for the worker container (deploy/README.md step 4: adjust
+# the owner if you publish to a different GHCR namespace, and keep it in sync
+# with Image= in deploy/sgbr-worker.container).
+worker_image := "ghcr.io/vincentserpoul/sgbr-worker:latest"
+
 # Default recipe: list all available recipes
 default:
     @just --list
@@ -70,6 +75,27 @@ run-worker:
 
 worker-invite:
     SGBR_ADMIN_TOKEN=${SGBR_ADMIN_TOKEN:-dev-admin} cargo run -p sgbr-worker -- invite new
+
+# Static ARM binary for the Oracle VM (one-time on the dev machine:
+# `rustup target add aarch64-unknown-linux-musl`, `cargo install cargo-zigbuild`,
+# and `zig` via your package manager, e.g. `pacman -S zig`).
+build-worker-arm:
+    cargo zigbuild -p sgbr-worker --release --target aarch64-unknown-linux-musl
+
+# Build the scratch image (needs build-worker-arm first). Stages the release
+# binary into a throwaway build context (crates/sgbr-worker/Containerfile
+# expects the binary at the context root) so nothing is written into the repo.
+build-worker-image: build-worker-arm
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ctx=$(mktemp -d)
+    trap 'rm -rf "$ctx"' EXIT
+    cp target/aarch64-unknown-linux-musl/release/sgbr-worker "$ctx/sgbr-worker"
+    podman build --arch arm64 -t {{ worker_image }} -f crates/sgbr-worker/Containerfile "$ctx"
+
+# Push the built image to GHCR (⚑ `podman login ghcr.io` first).
+push-worker-image:
+    podman push {{ worker_image }}
 
 # Run all tests with nextest
 test:

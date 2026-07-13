@@ -1,0 +1,29 @@
+[Unit]
+Description=Cloudflare Tunnel for sgbr-worker
+After=network-online.target sgbr-worker.service
+Wants=network-online.target
+Requires=sgbr-worker.service
+
+[Container]
+Image=docker.io/cloudflare/cloudflared:latest
+ContainerName=cloudflared
+Network=sgbr.network
+Exec=tunnel run --token ${TUNNEL_TOKEN}
+AutoUpdate=registry
+NoNewPrivileges=true
+
+[Service]
+# Deliberately NOT [Container]'s EnvironmentFile= — that key only reaches the
+# *container's* env via `podman run --env-file` and does nothing for the
+# ExecStart= line quadlet generates on the host. `${TUNNEL_TOKEN}` above is
+# expanded by systemd itself at start time from this unit's own [Service]
+# environment (systemd.service(5) "Command Lines"), which EnvironmentFile=
+# here provides. Verified against `quadlet -dryrun`: with EnvironmentFile
+# only under [Container], the generated ExecStart= keeps the literal
+# "${TUNNEL_TOKEN}" string; moving it here surfaces it to systemd's own
+# substitution.
+EnvironmentFile=%h/sgbr/cloudflared-env
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

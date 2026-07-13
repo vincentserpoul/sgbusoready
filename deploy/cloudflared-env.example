@@ -1,0 +1,7 @@
+# Copy to ~/sgbr/cloudflared-env on the VM and `chmod 600` it. Real secret —
+# never commit the filled-in version.
+
+# Cloudflare Zero Trust > Networks > Tunnels > sgbr > "Install and run a
+# connector" > Docker tab; copy the token argument's value only (not the
+# whole `docker run ...` command).
+TUNNEL_TOKEN=replace-with-the-cloudflare-tunnel-token

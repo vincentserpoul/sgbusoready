@@ -1,0 +1,27 @@
+[Unit]
+Description=SG Bus Commute backend worker
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+# Adjust the owner if you publish to a different GHCR namespace.
+Image=ghcr.io/vincentserpoul/sgbr-worker:latest
+# Fixed name so cloudflared's tunnel config can target http://sgbr-worker:8080
+# by container name over the shared `sgbr` network.
+ContainerName=sgbr-worker
+Network=sgbr.network
+# SGBR_BIND, SGBR_DATA_DIR, LTA_API_ACCOUNT_KEY, SGBR_ADMIN_TOKEN,
+# SGBR_POLL_SECS all live in this one file — see deploy/env.example.
+EnvironmentFile=%h/sgbr/env
+Volume=%h/sgbr/data:/data:Z
+AutoUpdate=registry
+NoNewPrivileges=true
+# Root filesystem is read-only; /data is a separate bind mount and stays
+# writable regardless (store.json + catalog.json live there, not on /).
+ReadOnly=true
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,6 @@
+# Podman quadlet network unit. Filename gives the network its identity:
+# `sgbr.network` -> Podman network `systemd-sgbr`, brought up by
+# `sgbr-network.service`. Referenced from the two `.container` units below via
+# `Network=sgbr.network`, so `sgbr-worker` and `cloudflared` share one bridge
+# and can resolve each other by container name without any published ports.
+[Network]

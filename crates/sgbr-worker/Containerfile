@@ -1,0 +1,21 @@
+# sgbr-worker: static aarch64-musl binary on a scratch base.
+#
+# Build context must contain the release binary at its root, named
+# `sgbr-worker` (see `just build-worker-image`, which stages
+# target/aarch64-unknown-linux-musl/release/sgbr-worker into a throwaway
+# context dir before invoking `podman build -f crates/sgbr-worker/Containerfile
+# <context-dir>`; do not `podman build` this Containerfile against the repo
+# root — the binary won't be there).
+#
+# TLS roots: ureq (workspace pin `ureq = "3.0"`, features = ["json"]) resolves
+# to ureq 3.3.0 with its `default = ["rustls", "gzip"]` features, which pull in
+# `rustls-webpki-roots` (Cargo.lock: `webpki-roots` 1.0.8) and no
+# `platform-verifier`/`rustls-platform-verifier`. ureq-3.3.0/src/tls/mod.rs:333
+# defaults `TlsConfig.root_certs` to `RootCerts::WebPki`, and no code in
+# sgbr-core overrides `.tls_config()`, so the binary verifies HTTPS against
+# certificates compiled into itself — a scratch image needs no /etc/ssl CA
+# bundle for outbound calls to DataMall.
+FROM scratch
+COPY sgbr-worker /sgbr-worker
+USER 65534:65534
+ENTRYPOINT ["/sgbr-worker", "serve"]
