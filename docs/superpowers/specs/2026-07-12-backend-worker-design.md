@@ -147,3 +147,11 @@ formats them into a query string instead of issuing N `DataMall` calls.
 - `Cargo.toml` (root) — temporary `lta-upstream` passthrough on the app's
   `sgbr-core` dependency.
 - `deny.toml`, `.supply-chain/` — allowlist/exemptions for the new deps.
+
+## Deployment (Phase 6)
+
+This doc stays authoritative on design; day-to-day operations (provisioning,
+building/pushing the image, the quadlet units, smoke-testing, and the update
+flow) live in `deploy/README.md`, with the container/unit artifacts
+themselves at `crates/sgbr-worker/Containerfile` and `deploy/*.network`,
+`deploy/*.container`.
