@@ -146,7 +146,7 @@ formats them into a query string instead of issuing N `DataMall` calls.
 - `crates/sgbr-core/src/error.rs` — `CoreError::Auth`, `CoreError::Crypto`.
 - `Cargo.toml` (root) — temporary `lta-upstream` passthrough on the app's
   `sgbr-core` dependency.
-- `deny.toml`, `.supply-chain/` — allowlist/exemptions for the new deps.
+- `.supply-chain/` — cargo-vet exemptions for the new deps.
 
 ## Deployment (Phase 6)
 

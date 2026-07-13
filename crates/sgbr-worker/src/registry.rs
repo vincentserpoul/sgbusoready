@@ -44,10 +44,19 @@ pub struct LtaFetcher {
 }
 
 impl LtaFetcher {
+    /// A hung upstream connection would otherwise stall a stop's poll loop
+    /// forever (fetches run serially per stop), so the whole request is
+    /// capped rather than left on ureq's unlimited defaults.
+    const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+
     #[must_use]
     pub fn new(account_key: String) -> Self {
         Self {
-            agent: Agent::new_with_config(Agent::config_builder().build()),
+            agent: Agent::new_with_config(
+                Agent::config_builder()
+                    .timeout_global(Some(Self::FETCH_TIMEOUT))
+                    .build(),
+            ),
             account_key,
         }
     }
