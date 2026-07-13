@@ -68,6 +68,22 @@ Phase 6 adds deployment artifacts.
   Public is fine — the image contains no secrets (the `AccountKey` and admin
   token are injected as runtime env/secrets by the quadlet, not baked in).
 
+## Dev builds
+
+Both the desktop binary and the Android cdylib pick up the worker's base URL at
+build time via `option_env!("SGBR_WORKER_URL")` (`src/lib.rs`'s `WORKER_URL`,
+consumed by `feed.rs`/`rows.rs`/`android_bridge.rs`); an unset/empty value means
+"no server configured" and the invite screen reports it rather than trying to
+connect.
+
+- **Android dev builds** run against a worker on the dev machine: set
+  `SGBR_WORKER_URL=http://127.0.0.1:8080` (in the git-ignored repo-root `.env`,
+  which `android/.env.build` already sources with `set -a`/`. .env`/`set +a` —
+  no build-plumbing changes needed) and `adb reverse tcp:8080 tcp:8080` so the
+  on-device app reaches the host's `localhost:8080`.
+- **Production builds** set `SGBR_WORKER_URL` to the public `https://` tunnel
+  URL from the Phase 6 deployment.
+
 ## Wire protocol
 
 | Endpoint | Auth | Behavior |

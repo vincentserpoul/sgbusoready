@@ -21,6 +21,7 @@
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use jni::errors::Error as JniError;
 use jni::objects::{JClass, JObject, JString, JValue};
@@ -32,16 +33,10 @@ use time::macros::offset;
 use sgbr_core::commute::display::format_active_notification;
 use sgbr_core::commute::schedule::{active_stop_plans, next_alarm_at};
 use sgbr_core::commute::store::CommuteStore;
-use sgbr_core::lta::arrival::{StopArrivals, stop_arrivals};
-use sgbr_core::lta::client::fetch_arrivals;
+use sgbr_core::lta::arrival::StopArrivals;
 
-/// LTA `DataMall` `AccountKey`, injected at build time from `LTA_API_ACCOUNT_KEY`
-/// (read from the repo-root `.env` by `android/.env.build`). Empty if unset,
-/// in which case fetches fail gracefully and rows show "no buses".
-const ACCOUNT_KEY: &str = match option_env!("LTA_API_ACCOUNT_KEY") {
-    Some(k) => k,
-    None => "",
-};
+use crate::feed::feed;
+use crate::{WORKER_URL, credentials_path, load_credentials};
 
 /// Initialise logcat logging (tag `sgbr`). Idempotent — safe to call from any
 /// entry point (the activity, the service's JNI calls), so logs work whichever
@@ -69,25 +64,42 @@ fn store_path(files_dir: &str) -> PathBuf {
 
 /// Render the Live Update body across all active commutes: one line per distinct
 /// stop (union of tracked buses), time-first with buses bracketed. Empty string
-/// => nothing active (caller stops the service).
+/// => nothing active (caller stops the service). Backed by the process-global
+/// [`crate::feed::ArrivalsFeed`] — the same worker-fed cache the desktop app
+/// reads from — rather than a direct LTA fetch.
 fn render_active(files_dir: &str, now: OffsetDateTime) -> String {
-    let store = CommuteStore::load(&store_path(files_dir)).unwrap_or_default();
+    let path = store_path(files_dir);
+    let store = CommuteStore::load(&path).unwrap_or_default();
     let plans = active_stop_plans(&store.commutes, now);
     if plans.is_empty() {
+        // Nothing active: tell the feed so its stream thread exits, and stop
+        // the service (empty string) as before.
+        feed().set_plans(vec![], None, WORKER_URL);
         return String::new();
     }
+    let Some(creds) = load_credentials(&credentials_path(&path)) else {
+        // No worker credentials yet (unregistered device): no notification,
+        // but still clear the feed's plan so its stream thread exits.
+        feed().set_plans(vec![], None, WORKER_URL);
+        return String::new();
+    };
+    feed().set_plans(plans.clone(), Some(&creds), WORKER_URL);
+    // Cold-start grace: give the stream a moment to deliver its first
+    // snapshot so the very first render isn't "no buses" across the board.
+    // The bool result is ignored — proceed either way.
+    let _ = feed().wait_first(Duration::from_secs(3));
+    // Plans already carry the per-stop union of tracked buses, and the
+    // worker's SSE frames are filtered to exactly the services requested in
+    // the stream query (built from these same plans via `stream_query`), so
+    // `items_for` needs no extra per-commute filtering here (unlike the
+    // desktop list rows, which re-filter a shared snapshot down to each
+    // individual commute's bus set).
     let stops: Vec<StopArrivals> = plans
         .iter()
-        .map(|plan| match fetch_arrivals(ACCOUNT_KEY, &plan.code) {
-            Ok(resp) => stop_arrivals(&plan.code, &plan.name, &plan.buses, &resp, now),
-            Err(e) => {
-                log::warn!("fetch stop {} failed: {e}", plan.code);
-                StopArrivals {
-                    code: plan.code.clone(),
-                    name: plan.name.clone(),
-                    items: Vec::new(),
-                }
-            }
+        .map(|plan| StopArrivals {
+            code: plan.code.clone(),
+            name: plan.name.clone(),
+            items: feed().items_for(&plan.code),
         })
         .collect();
     format_active_notification(&stops)
