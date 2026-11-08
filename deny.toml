@@ -10,10 +10,17 @@ db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 # Add specific RUSTSEC ignores here only with a justification comment.
 ignore = [
-  # `paste` is archived/unmaintained (no fix available). It's a transitive
-  # build-time proc-macro dep pulled in via Slint; no known vulnerability,
-  # only the unmaintained advisory. Revisit if Slint drops it.
-  "RUSTSEC-2024-0436",
+  # Unmaintained (not vulnerable) transitive deps of Slint 1.18's desktop
+  # stack, none with an upstream fix available:
+  # - pin-utils: via spin_on <- slint-build / slint-macros.
+  # - ttf-parser: via ab_glyph <- sctk-adwaita (Wayland decorations).
+  # - zbus_names / zvariant / zvariant_derive: via atspi <- accesskit_unix
+  #   (Linux accessibility). Revisit on each Slint bump.
+  "RUSTSEC-2026-0441",
+  "RUSTSEC-2026-0192",
+  "RUSTSEC-2026-0371",
+  "RUSTSEC-2026-0370",
+  "RUSTSEC-2026-0372",
 ]
 
 # ============================================================================
@@ -30,27 +37,16 @@ allow = [
   "ISC",
   "Zlib",
   "MPL-2.0",
-  "OpenSSL",
   "Unicode-3.0",
   "CC0-1.0",
   "BSL-1.0",
   "CDLA-Permissive-2.0",
   "Unlicense",
-  # NCSA (University of Illinois/NCSA Open Source) — OSI-approved, FSF Free/Libre,
-  # permissive and GPL-compatible. Pulled in (build-time) via Slint 1.17's compiler
-  # → image → ravif → rav1e → libfuzzer-sys.
-  "NCSA",
   # This app is licensed GPL-3.0-only (see LICENSE), which is also the license we
   # elect for Slint (tri-licensed GPL-3.0 / Royalty-Free / paid Software).
   "GPL-3.0-only",
 ]
 confidence-threshold = 0.8
-
-# Ring uses a custom license that's permissive (likely pulled in via rustls).
-[[licenses.clarify]]
-name = "ring"
-expression = "MIT AND ISC AND OpenSSL"
-license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 # ============================================================================
 # BANS — deny or allow specific crates or versions

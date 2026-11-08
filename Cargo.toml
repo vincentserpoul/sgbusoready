@@ -22,7 +22,7 @@ members = ["crates/sgbr-core", "crates/sgbr-worker"]
 # Shared across crates — extended as the implementation plan lands.
 async-stream = "0.3"
 axum = "0.8"
-base64 = "0.22"
+base64 = "0.23"
 clap = { version = "4", features = ["derive"] }
 ed25519-dalek = "2"
 getrandom = "0.3"

@@ -75,7 +75,7 @@ use editor::{
 };
 use feed::feed;
 use hero::update_hero;
-use rows::{rebuild_rows, refresh_arrivals};
+use rows::refresh_arrivals;
 
 type Store = Rc<RefCell<CommuteStore>>;
 
@@ -254,6 +254,29 @@ fn maybe_start_service(store: &CommuteStore) {
     let _ = store;
 }
 
+/// Re-render everything the store drives on the list screen: the hero line and
+/// the commute rows with their live arrivals.
+fn repaint(window: &AppWindow, store: &CommuteStore, path: &Path) {
+    update_hero(window, store);
+    refresh_arrivals(window, store, path);
+}
+
+/// The worker answered the arrivals stream with `401`/`403`: this device was
+/// revoked (or the worker lost its store). The cached credentials are dead
+/// weight — drop them and send the user back to the invite screen instead of
+/// silently showing "no buses" forever.
+fn handle_revoked(window: &AppWindow, store_path: &Path) {
+    if !window.get_registered() {
+        return;
+    }
+    let _ = std::fs::remove_file(credentials_path(store_path));
+    window.set_registered(false);
+    window.set_invite_error(SharedString::from(
+        "this device is no longer registered — enter a new invite code",
+    ));
+    window.set_screen(Screen::Invite);
+}
+
 fn handle_save(window: &AppWindow, store: &Store, path: &Path, form_stops: &FormStops) {
     let label = window.get_form_label().to_string();
     let label = if label.trim().is_empty() {
@@ -305,9 +328,7 @@ fn handle_save(window: &AppWindow, store: &Store, path: &Path, form_stops: &Form
     drop(s);
 
     populate_form(window, None, -1, None, form_stops);
-    rebuild_rows(window, &store.borrow());
-    update_hero(window, &store.borrow());
-    refresh_arrivals(window, &store.borrow(), path);
+    repaint(window, &store.borrow(), path);
     window.set_screen(Screen::List);
 }
 
@@ -331,12 +352,10 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
     if !registered {
         window.set_screen(Screen::Invite);
     }
-    rebuild_rows(&window, &store.borrow());
-    update_hero(&window, &store.borrow());
+    repaint(&window, &store.borrow(), &store_path);
     with_catalog(&catalog, |cat| {
         populate_form(&window, None, -1, cat, &form_stops);
     });
-    refresh_arrivals(&window, &store.borrow(), &store_path);
     maybe_start_service(&store.borrow());
     window.set_catalog_loading(with_catalog(&catalog, |c| c.is_none()));
     spawn_refresh_if_stale(&catalog, &window, &store_path);
@@ -350,8 +369,12 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
     ON_ARRIVALS_CHANGED.with(|cell| {
         *cell.borrow_mut() = Some(Box::new(move || {
             if let Some(w) = weak.upgrade() {
-                update_hero(&w, &repaint_store.borrow());
-                refresh_arrivals(&w, &repaint_store.borrow(), &repaint_path);
+                repaint(&w, &repaint_store.borrow(), &repaint_path);
+                // Checked *after* `refresh_arrivals`, whose `set_plans` is what
+                // clears the rejection once a fresh token is on disk.
+                if feed().auth_rejected() {
+                    handle_revoked(&w, &repaint_path);
+                }
             }
         }));
     });
@@ -408,9 +431,7 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
                 persist(&store, &p);
             }
             drop(store);
-            rebuild_rows(&w, &s.borrow());
-            update_hero(&w, &s.borrow());
-            refresh_arrivals(&w, &s.borrow(), &p);
+            repaint(&w, &s.borrow(), &p);
         }
     });
 
@@ -539,10 +560,19 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
         std::thread::spawn(
             move || match sgbr_core::worker::client::register(WORKER_URL, &code) {
                 Ok(creds) => {
-                    let _ = creds.save(&credentials_path(&store_path));
+                    let saved = creds.save(&credentials_path(&store_path));
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(w) = weak.upgrade() {
                             w.set_invite_busy(false);
+                            // The invite is consumed server-side either way;
+                            // hiding a failed save would strand the device at
+                            // the next launch with no way back in.
+                            if let Err(e) = saved {
+                                w.set_invite_error(SharedString::from(format!(
+                                    "registered, but saving credentials failed: {e}"
+                                )));
+                                return;
+                            }
                             w.set_invite_error(SharedString::new());
                             w.set_registered(true);
                             w.set_screen(Screen::List);
@@ -572,17 +602,20 @@ pub fn run_app(store_path: PathBuf) -> Result<(), slint::PlatformError> {
         );
     });
 
-    // Refresh live arrivals on the list every 15s while a commute is active.
+    // Every 15s: retry a missing/stale catalog fetch (a no-op once it has
+    // landed), and refresh the list's hero + live arrivals while it is showing.
     let arrivals_timer = Timer::default();
     let w = window.as_weak();
     let s = Rc::clone(&store);
     let p = Rc::clone(&store_path);
+    let c = Arc::clone(&catalog);
     arrivals_timer.start(TimerMode::Repeated, Duration::from_secs(15), move || {
-        if ON_LIST.load(Ordering::Relaxed)
-            && let Some(w) = w.upgrade()
-        {
-            update_hero(&w, &s.borrow());
-            refresh_arrivals(&w, &s.borrow(), &p);
+        let Some(w) = w.upgrade() else {
+            return;
+        };
+        spawn_refresh_if_stale(&c, &w, &p);
+        if ON_LIST.load(Ordering::Relaxed) {
+            repaint(&w, &s.borrow(), &p);
         }
     });
 

@@ -1,6 +1,7 @@
 //! `sgbr-worker`: the axum backend that hides the LTA `DataMall` `AccountKey`
-//! and serves device registration, the bus catalog, and admin endpoints. The
-//! arrivals SSE stream lands in Phase 2.
+//! and serves device registration, the bus catalog, the live arrivals SSE
+//! stream, and admin endpoints. `serve` runs the server; the other
+//! subcommands are thin clients for the admin API.
 
 use std::sync::Arc;
 
@@ -109,61 +110,81 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Resolve on SIGINT (Ctrl-C) *or* SIGTERM — the latter is what
+/// `systemctl stop` / podman send, so without it the graceful-shutdown path
+/// never ran in the container and open SSE streams were killed outright instead.
 async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
+    let ctrl_c = tokio::signal::ctrl_c();
+    let Ok(mut term) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    else {
+        let _ = ctrl_c.await;
+        return;
+    };
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = term.recv() => {}
+    }
 }
 
-fn admin_token() -> Result<String, Box<dyn std::error::Error>> {
-    std::env::var("SGBR_ADMIN_TOKEN").map_err(|_var_err| "SGBR_ADMIN_TOKEN is not set".into())
+#[derive(Debug, Clone, Copy)]
+enum Verb {
+    Get,
+    Post,
+    Delete,
 }
 
-fn admin_agent() -> ureq::Agent {
-    ureq::Agent::new_with_config(ureq::Agent::config_builder().build())
+/// One call against the admin API at `{url}{path}`, authenticated with
+/// `SGBR_ADMIN_TOKEN`. Returns the JSON body, or `None` for an empty one
+/// (`204` on revoke).
+fn admin_call(
+    verb: Verb,
+    url: &str,
+    path: &str,
+) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error>> {
+    let token =
+        std::env::var("SGBR_ADMIN_TOKEN").map_err(|_var_err| "SGBR_ADMIN_TOKEN is not set")?;
+    let agent = ureq::Agent::new_with_config(ureq::Agent::config_builder().build());
+    let full = format!("{url}{path}");
+    let mut response = match verb {
+        Verb::Get => agent.get(&full).header("X-Admin-Token", &token).call()?,
+        Verb::Post => agent
+            .post(&full)
+            .header("X-Admin-Token", &token)
+            .send_empty()?,
+        Verb::Delete => agent.delete(&full).header("X-Admin-Token", &token).call()?,
+    };
+    let text = response.body_mut().read_to_string()?;
+    if text.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(serde_json::from_str(&text)?))
+    }
 }
 
 #[allow(clippy::print_stdout, reason = "CLI output")]
-fn invite_cmd(action: InviteAction) -> Result<(), Box<dyn std::error::Error>> {
-    let token = admin_token()?;
-    let agent = admin_agent();
-    match action {
-        InviteAction::New { url } => {
-            let mut response = agent
-                .post(format!("{url}/v1/admin/invites"))
-                .header("X-Admin-Token", &token)
-                .send_empty()?;
-            let body: serde_json::Value = response.body_mut().read_json()?;
-            println!("{body}");
-        }
-        InviteAction::List { url } => {
-            let mut response = agent
-                .get(format!("{url}/v1/admin/invites"))
-                .header("X-Admin-Token", &token)
-                .call()?;
-            let body: serde_json::Value = response.body_mut().read_json()?;
-            println!("{body}");
-        }
+fn print_body(body: Option<serde_json::Value>) {
+    if let Some(body) = body {
+        println!("{body}");
     }
+}
+
+fn invite_cmd(action: InviteAction) -> Result<(), Box<dyn std::error::Error>> {
+    let body = match action {
+        InviteAction::New { url } => admin_call(Verb::Post, &url, "/v1/admin/invites")?,
+        InviteAction::List { url } => admin_call(Verb::Get, &url, "/v1/admin/invites")?,
+    };
+    print_body(body);
     Ok(())
 }
 
 #[allow(clippy::print_stdout, reason = "CLI output")]
 fn device_cmd(action: DeviceAction) -> Result<(), Box<dyn std::error::Error>> {
-    let token = admin_token()?;
-    let agent = admin_agent();
     match action {
         DeviceAction::List { url } => {
-            let mut response = agent
-                .get(format!("{url}/v1/admin/devices"))
-                .header("X-Admin-Token", &token)
-                .call()?;
-            let body: serde_json::Value = response.body_mut().read_json()?;
-            println!("{body}");
+            print_body(admin_call(Verb::Get, &url, "/v1/admin/devices")?);
         }
         DeviceAction::Revoke { id, url } => {
-            agent
-                .delete(format!("{url}/v1/admin/devices/{id}"))
-                .header("X-Admin-Token", &token)
-                .call()?;
+            admin_call(Verb::Delete, &url, &format!("/v1/admin/devices/{id}"))?;
             println!("revoked {id}");
         }
     }

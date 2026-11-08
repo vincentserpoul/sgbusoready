@@ -23,16 +23,17 @@ pub struct Config {
     pub bind: String,
     pub data_dir: PathBuf,
     pub admin_token: String,
-    #[allow(
-        dead_code,
-        reason = "parsed now, consumed by the Phase 2 arrival poll loop"
-    )]
+    /// Arrivals poll interval per subscribed stop (see `registry::Registry`).
     pub poll_secs: u64,
 }
 
 const DEFAULT_BIND: &str = "127.0.0.1:8080";
 const DEFAULT_DATA_DIR: &str = "./data";
 const DEFAULT_POLL_SECS: u64 = 15;
+/// Floor for `SGBR_POLL_SECS`: anything lower turns every subscribed stop
+/// into a back-to-back request loop against `DataMall` (`0` would not sleep
+/// at all) and risks the shared `AccountKey` being rate-limited.
+const MIN_POLL_SECS: u64 = 5;
 
 impl Config {
     /// Build from the process environment (`LTA_API_ACCOUNT_KEY`,
@@ -41,7 +42,8 @@ impl Config {
     ///
     /// # Errors
     /// [`ConfigError::MissingEnv`] if a required var is unset,
-    /// [`ConfigError::InvalidEnv`] if `SGBR_POLL_SECS` isn't a valid `u64`,
+    /// [`ConfigError::InvalidEnv`] if `SGBR_POLL_SECS` isn't a `u64` of at
+    /// least `MIN_POLL_SECS`,
     /// [`ConfigError::DataDir`] if the data dir can't be created.
     pub fn from_env() -> Result<Self, ConfigError> {
         Self::from_lookup(|key| std::env::var(key).ok())
@@ -66,6 +68,12 @@ impl Config {
                 .map_err(|e| ConfigError::InvalidEnv("SGBR_POLL_SECS".to_owned(), e.to_string()))?,
             None => DEFAULT_POLL_SECS,
         };
+        if poll_secs < MIN_POLL_SECS {
+            return Err(ConfigError::InvalidEnv(
+                "SGBR_POLL_SECS".to_owned(),
+                format!("must be at least {MIN_POLL_SECS}"),
+            ));
+        }
         Ok(Self {
             lta_account_key,
             bind,
@@ -135,6 +143,34 @@ mod tests {
             ("SGBR_POLL_SECS", "not-a-number"),
         ]));
         assert!(matches!(err, Err(ConfigError::InvalidEnv(_, _))));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn poll_secs_below_floor_is_an_error() {
+        let tmp =
+            std::env::temp_dir().join(format!("sgbr_worker_cfg_lowpoll_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        for value in ["0", "4"] {
+            let err = Config::from_lookup(lookup(&[
+                ("LTA_API_ACCOUNT_KEY", "key"),
+                ("SGBR_ADMIN_TOKEN", "tok"),
+                ("SGBR_DATA_DIR", tmp.to_str().unwrap_or_default()),
+                ("SGBR_POLL_SECS", value),
+            ]));
+            assert!(
+                matches!(err, Err(ConfigError::InvalidEnv(_, _))),
+                "{value} should be rejected"
+            );
+        }
+        let config = Config::from_lookup(lookup(&[
+            ("LTA_API_ACCOUNT_KEY", "key"),
+            ("SGBR_ADMIN_TOKEN", "tok"),
+            ("SGBR_DATA_DIR", tmp.to_str().unwrap_or_default()),
+            ("SGBR_POLL_SECS", "5"),
+        ]))
+        .expect("floor value is accepted");
+        assert_eq!(config.poll_secs, 5);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

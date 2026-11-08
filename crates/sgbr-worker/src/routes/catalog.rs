@@ -5,7 +5,8 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use sgbr_core::bus_catalog::model::BusStop;
+use serde::Serialize;
+use sgbr_core::bus_catalog::model::BusCatalog;
 
 use crate::auth::Device;
 use crate::error::ApiError;
@@ -16,81 +17,67 @@ pub async fn bus_stops(
     _device: Device,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let catalog = state
-        .catalog()
-        .snapshot()
-        .await
-        .ok_or(ApiError::CatalogNotReady)?;
-    let etag = format!("\"stops-{}\"", catalog.fetched_at_unix);
-    if if_none_match_hits(&headers, &etag) {
-        return Ok(not_modified(&etag));
-    }
-    let body: Vec<BusStop> = catalog.stops.clone();
-    Ok(with_etag(Json(body).into_response(), &etag))
+    catalog_view(&state, &headers, "stops", |catalog| catalog.stops.clone()).await
 }
 
+/// Flat `(stop_code, service_no)` pairs — the shape
+/// `sgbr_core::bus_catalog::parse::build_services_by_stop` reassembles.
 pub async fn bus_routes(
     State(state): State<AppState>,
     _device: Device,
     headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    catalog_view(&state, &headers, "routes", |catalog| {
+        catalog
+            .services_by_stop
+            .iter()
+            .flat_map(|(stop, services)| {
+                services.iter().map(move |svc| (stop.clone(), svc.clone()))
+            })
+            .collect::<Vec<(String, String)>>()
+    })
+    .await
+}
+
+/// The shared conditional-GET flow behind both catalog endpoints. The `ETag`
+/// `"{prefix}-{fetched_at_unix}"` identifies the cached snapshot: a matching
+/// `If-None-Match` answers `304` with no body, otherwise `project` renders the
+/// JSON body. Either way the response carries the `ETag`.
+async fn catalog_view<T: Serialize>(
+    state: &AppState,
+    headers: &HeaderMap,
+    prefix: &str,
+    project: impl FnOnce(&BusCatalog) -> T,
 ) -> Result<Response, ApiError> {
     let catalog = state
         .catalog()
         .snapshot()
         .await
         .ok_or(ApiError::CatalogNotReady)?;
-    let etag = format!("\"routes-{}\"", catalog.fetched_at_unix);
-    if if_none_match_hits(&headers, &etag) {
-        return Ok(not_modified(&etag));
-    }
-    let pairs: Vec<(String, String)> = catalog
-        .services_by_stop
-        .iter()
-        .flat_map(|(stop, services)| services.iter().map(move |svc| (stop.clone(), svc.clone())))
-        .collect();
-    Ok(with_etag(Json(pairs).into_response(), &etag))
-}
-
-fn if_none_match_hits(headers: &HeaderMap, etag: &str) -> bool {
-    headers
+    let etag = format!("\"{prefix}-{}\"", catalog.fetched_at_unix);
+    let unchanged = headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v == etag)
-}
-
-fn not_modified(etag: &str) -> Response {
-    let mut response = StatusCode::NOT_MODIFIED.into_response();
-    if let Ok(value) = HeaderValue::from_str(etag) {
+        .is_some_and(|v| v == etag);
+    let mut response = if unchanged {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        Json(project(&catalog)).into_response()
+    };
+    if let Ok(value) = HeaderValue::from_str(&etag) {
         response.headers_mut().insert(header::ETAG, value);
     }
-    response
-}
-
-fn with_etag(mut response: Response, etag: &str) -> Response {
-    if let Ok(value) = HeaderValue::from_str(etag) {
-        response.headers_mut().insert(header::ETAG, value);
-    }
-    response
+    Ok(response)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::router;
     use crate::catalog::CatalogCache;
-    use crate::config::Config;
-    use crate::registry::test_registry;
-    use crate::state::AppState;
-    use crate::store::DeviceStore;
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
-    use http_body_util::BodyExt as _;
+    use crate::test_support::{TestState, bearer_req, json_body, null_registry, req};
+    use axum::http::StatusCode;
     use sgbr_core::bus_catalog::model::{BusCatalog, BusStop};
     use sgbr_core::bus_catalog::parse::build_services_by_stop;
-    use sgbr_core::worker::auth::generate_keypair;
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
-    use std::sync::Arc;
-    use tower::ServiceExt as _;
 
     fn sample_catalog() -> BusCatalog {
         let mut services_by_stop = BTreeMap::new();
@@ -114,155 +101,68 @@ mod tests {
         }
     }
 
-    fn registered_state_with_catalog(
-        name: &str,
-        catalog: Option<BusCatalog>,
-    ) -> (AppState, String, PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "sgbr_worker_catalog_route_test_{}_{name}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create tmp dir");
-        let store = DeviceStore::load_or_default(dir.join("store.json")).expect("load store");
-        let invite = store.mint_invite().expect("mint invite");
-        let (_seed, pubkey) = generate_keypair().expect("keygen");
-        let (_device_id, token) = store
-            .register_device(&invite.code, &pubkey)
-            .expect("register device");
-        let config = Config {
-            lta_account_key: "unused".to_owned(),
-            bind: "127.0.0.1:0".to_owned(),
-            data_dir: dir.clone(),
-            admin_token: "test-admin-token".to_owned(),
-            poll_secs: 15,
-        };
-        let cache = catalog.map_or_else(CatalogCache::empty, CatalogCache::with_catalog);
-        let state = AppState::new(
-            Arc::new(config),
-            Arc::new(store),
-            Arc::new(cache),
-            test_registry(),
-        );
-        (state, token, dir)
+    /// A registered device against `catalog` (or an empty cache); returns the
+    /// state and its bearer token.
+    fn registered(name: &str, catalog: Option<BusCatalog>) -> (TestState, String) {
+        let cache = catalog.map_or_else(CatalogCache::default, CatalogCache::with_catalog);
+        let t = TestState::with(name, cache, null_registry());
+        let token = t.register_device();
+        (t, token)
     }
 
-    #[tokio::test]
-    async fn bus_stops_503_when_catalog_empty() {
-        let (state, token, dir) = registered_state_with_catalog("empty-stops", None);
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/bus-stops")
-                    .header("authorization", format!("Bearer {token}"))
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn bus_stops_200_with_etag_then_304_on_if_none_match() {
-        let (state, token, dir) =
-            registered_state_with_catalog("stops-etag", Some(sample_catalog()));
-
-        let response = router(state.clone())
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/bus-stops")
-                    .header("authorization", format!("Bearer {token}"))
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
-        assert_eq!(response.status(), StatusCode::OK);
-        let etag = response
+    fn etag_of(response: &axum::response::Response) -> String {
+        response
             .headers()
             .get("etag")
             .expect("etag header")
             .to_str()
             .expect("etag str")
-            .to_owned();
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn bus_stops_503_when_catalog_empty() {
+        let (t, token) = registered("catalog-empty-stops", None);
+        let response = t.send(bearer_req("GET", "/v1/bus-stops", &token)).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn bus_stops_200_with_etag_then_304_on_if_none_match() {
+        let (t, token) = registered("catalog-stops-etag", Some(sample_catalog()));
+
+        let response = t.send(bearer_req("GET", "/v1/bus-stops", &token)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let etag = etag_of(&response);
         assert_eq!(etag, "\"stops-1700000000\"");
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .expect("read body")
-            .to_bytes();
-        let stops: Vec<BusStop> = serde_json::from_slice(&bytes).expect("parse stops");
+        let stops: Vec<BusStop> =
+            serde_json::from_value(json_body(response).await).expect("parse stops");
         assert_eq!(stops.len(), 2);
 
-        let not_modified = router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/bus-stops")
-                    .header("authorization", format!("Bearer {token}"))
-                    .header("if-none-match", etag)
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let not_modified = t
+            .send(bearer_req("GET", "/v1/bus-stops", &token).header("if-none-match", etag))
+            .await;
         assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn bus_routes_round_trips_through_build_services_by_stop() {
         let catalog = sample_catalog();
         let expected = catalog.services_by_stop.clone();
-        let (state, token, dir) = registered_state_with_catalog("routes-roundtrip", Some(catalog));
+        let (t, token) = registered("catalog-routes-roundtrip", Some(catalog));
 
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/bus-routes")
-                    .header("authorization", format!("Bearer {token}"))
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let response = t.send(bearer_req("GET", "/v1/bus-routes", &token)).await;
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response
-                .headers()
-                .get("etag")
-                .expect("etag header")
-                .to_str()
-                .expect("etag str"),
-            "\"routes-1700000000\""
-        );
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .expect("read body")
-            .to_bytes();
-        let pairs: Vec<(String, String)> = serde_json::from_slice(&bytes).expect("parse pairs");
-        let rebuilt = build_services_by_stop(pairs);
-        assert_eq!(rebuilt, expected);
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(etag_of(&response), "\"routes-1700000000\"");
+        let pairs: Vec<(String, String)> =
+            serde_json::from_value(json_body(response).await).expect("parse pairs");
+        assert_eq!(build_services_by_stop(pairs), expected);
     }
 
     #[tokio::test]
     async fn missing_bearer_token_is_401() {
-        let (state, _token, dir) = registered_state_with_catalog("no-auth", Some(sample_catalog()));
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/bus-stops")
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let (t, _token) = registered("catalog-no-auth", Some(sample_catalog()));
+        let response = t.send(req("GET", "/v1/bus-stops")).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,12 +1,13 @@
-//! Blocking client for the worker's HTTP API. This is the *only* network
-//! surface the shipped app needs post Phase-4: it never touches `DataMall`
-//! directly. Network paths here get their real (integration) test coverage
-//! in Phase 3 against a real router; Phase 0 only wires the plumbing.
+//! Blocking client for the worker's HTTP API — the *only* network surface the
+//! shipped app has; it never touches `DataMall` directly. Covered end-to-end
+//! against the real router in `crates/sgbr-worker/tests/client_stream.rs`.
 
 use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use time::OffsetDateTime;
 use ureq::Agent;
 
@@ -34,6 +35,19 @@ const CATALOG_TIMEOUT: Duration = Duration::from_secs(30);
 /// Response body size cap for the catalog endpoints — the full stop/route
 /// datasets are bigger than ureq's default 10 MiB limit.
 const CATALOG_BODY_LIMIT: u64 = 32 * 1024 * 1024;
+
+/// TCP/TLS connect cap for the SSE stream.
+const STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Cap on waiting for the stream's response headers.
+const STREAM_RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Idle cap on each transport read of the stream. The worker sends a `: hb`
+/// comment every 25s, so a healthy connection never trips this while a
+/// half-open one is detected within a minute. Deliberately *not*
+/// `timeout_recv_body`, which in ureq 3 is a total budget from the headers
+/// onward and would sever every stream at a fixed age.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// Register a new device against `invite_code`: generate a fresh Ed25519
 /// keypair locally, sign the fixed registration message, and exchange it for
@@ -73,14 +87,9 @@ pub fn register(base_url: &str, invite_code: &str) -> Result<WorkerCredentials, 
     Ok(WorkerCredentials {
         token: body.token,
         device_id: body.device_id,
-        secret_seed_b64: base64_encode(&seed),
+        secret_seed_b64: BASE64.encode(seed),
         pubkey_b64: pubkey,
     })
-}
-
-fn base64_encode(seed: &[u8; 32]) -> String {
-    use base64::Engine as _;
-    base64::engine::general_purpose::STANDARD.encode(seed)
 }
 
 /// Fetch the full bus catalog from the worker (`GET /v1/bus-stops` +
@@ -129,10 +138,10 @@ pub enum StreamExit {
     /// The connection dropped (timeout, EOF, or I/O error); the caller should
     /// back off and reconnect with the same `query`.
     Disconnected,
-    /// The caller asked the stream to stop entirely (no active commutes).
-    /// Not produced by `run_stream` itself in this phase — reserved for the
-    /// orchestrator loop that owns starting/stopping streams.
-    Stopped,
+    /// The worker rejected the bearer token (`401`/`403`): the device was
+    /// revoked or never registered. Reconnecting with the same credentials
+    /// cannot help; the caller should stop and re-register.
+    Unauthorized,
 }
 
 /// Hold one SSE connection open against `GET /v1/arrivals?stops={query}`,
@@ -142,34 +151,32 @@ pub enum StreamExit {
 /// including comments/heartbeats).
 ///
 /// Deliberately does **not** loop or retry: reconnect/backoff policy lives in
-/// the caller, which can build a fresh `query` between attempts.
-///
-/// # Errors
-/// This phase never returns `Err` — connection and I/O failures are reported
-/// as `Ok(StreamExit::Disconnected)` so the caller has one place (the match
-/// on `StreamExit`) to decide what to do next. The `Result` wrapper is kept
-/// for forward compatibility (e.g. a malformed `cfg.base_url`).
+/// the caller, which can build a fresh `query` between attempts. Every way
+/// the connection can end is a [`StreamExit`] (connection and I/O failures
+/// are `Disconnected`), so the caller has exactly one match to write.
 pub fn run_stream(
     cfg: &WorkerConfig,
     query: &str,
     generation: &AtomicU64,
     my_gen: u64,
     mut on_update: impl FnMut(StopUpdate),
-) -> Result<StreamExit, CoreError> {
+) -> StreamExit {
     let agent = Agent::new_with_config(
         Agent::config_builder()
-            .timeout_connect(Some(Duration::from_secs(10)))
-            .timeout_recv_response(Some(Duration::from_secs(15)))
-            .timeout_recv_body(Some(Duration::from_secs(75)))
+            .timeout_connect(Some(STREAM_CONNECT_TIMEOUT))
+            .timeout_recv_response(Some(STREAM_RESPONSE_TIMEOUT))
+            .timeout_per_read(Some(STREAM_IDLE_TIMEOUT))
             .build(),
     );
     let url = format!("{}/v1/arrivals?stops={query}", cfg.base_url);
-    let Ok(mut response) = agent
+    let outcome = agent
         .get(&url)
         .header("Authorization", format!("Bearer {}", cfg.token))
-        .call()
-    else {
-        return Ok(StreamExit::Disconnected);
+        .call();
+    let mut response = match outcome {
+        Ok(response) => response,
+        Err(ureq::Error::StatusCode(401 | 403)) => return StreamExit::Unauthorized,
+        Err(_) => return StreamExit::Disconnected,
     };
     let mut reader = BufReader::new(response.body_mut().as_reader());
     let mut parser = SseParser::default();
@@ -177,10 +184,10 @@ pub fn run_stream(
     loop {
         line.clear();
         let Ok(bytes_read) = reader.read_line(&mut line) else {
-            return Ok(StreamExit::Disconnected);
+            return StreamExit::Disconnected;
         };
         if bytes_read == 0 {
-            return Ok(StreamExit::Disconnected);
+            return StreamExit::Disconnected;
         }
         let trimmed = line.strip_suffix('\n').unwrap_or(&line);
         if let Some(event) = parser.push_line(trimmed)
@@ -190,7 +197,7 @@ pub fn run_stream(
             on_update(update);
         }
         if generation.load(Ordering::Relaxed) != my_gen {
-            return Ok(StreamExit::PlanChanged);
+            return StreamExit::PlanChanged;
         }
     }
 }

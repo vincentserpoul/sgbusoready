@@ -1,4 +1,4 @@
-//! Phase 3 integration test: the real blocking device client
+//! Integration test: the real blocking device client
 //! (`sgbr_core::worker::client`) driven against the real `sgbr-worker` axum
 //! router over a loopback TCP socket — `axum::serve` on an ephemeral port,
 //! `run_stream`/`register` on a real `std::thread`, nothing shortcuts the
@@ -139,7 +139,7 @@ fn build_state(name: &str, fetcher: Arc<dyn ArrivalFetcher>) -> (AppState, PathB
     let state = AppState::new(
         Arc::new(config),
         Arc::new(store),
-        Arc::new(CatalogCache::empty()),
+        Arc::new(CatalogCache::default()),
         registry,
     );
     (state, dir)
@@ -252,7 +252,7 @@ fn spawn_client_thread(
     generation: Arc<AtomicU64>,
     my_gen: u64,
     updates_tx: mpsc::Sender<StopUpdate>,
-) -> std::thread::JoinHandle<Result<StreamExit, CoreError>> {
+) -> std::thread::JoinHandle<StreamExit> {
     std::thread::spawn(move || {
         client::run_stream(&cfg, &query, &generation, my_gen, |update| {
             let _ = updates_tx.send(update);
@@ -416,9 +416,7 @@ async fn stream_happy_path_delivers_cached_snapshot_immediately() {
     assert_eq!(update.items[0].buses, vec!["15".to_owned()]);
 
     kill_server(server).await;
-    let exit = join_with_timeout(handle)
-        .await
-        .expect("run_stream must not error against a healthy server");
+    let exit = join_with_timeout(handle).await;
     assert_eq!(exit, StreamExit::Disconnected);
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -468,9 +466,7 @@ async fn change_gate_over_the_wire_collapses_identical_polls() {
     assert_no_update_within(&updates_rx, Duration::from_millis(300)).await;
 
     kill_server(server).await;
-    let exit = join_with_timeout(handle)
-        .await
-        .expect("run_stream must not error against a healthy server");
+    let exit = join_with_timeout(handle).await;
     assert_eq!(exit, StreamExit::Disconnected);
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -503,16 +499,10 @@ async fn stream_with_invalid_token_does_not_hang_or_panic() {
         updates_tx,
     );
 
-    let result = join_with_timeout(handle).await;
-    // `run_stream` never distinguishes an auth rejection from any other
-    // failed `.call()` in this phase (see its doc comment) — a 401 surfaces
-    // through the same `Ok(StreamExit::Disconnected)` path as a dropped
-    // connection, not a distinguishable `Err`. Asserting the actual, current
-    // behavior per the brief — NOT changing `run_stream`'s error mapping.
-    match result {
-        Ok(StreamExit::Disconnected) => {}
-        other => panic!("expected Ok(StreamExit::Disconnected), got {other:?}"),
-    }
+    // A 401 must be distinguishable from a dropped connection: the feed stops
+    // retrying on `Unauthorized` (a revoked token can never recover by
+    // reconnecting) but backs off and retries on `Disconnected`.
+    assert_eq!(join_with_timeout(handle).await, StreamExit::Unauthorized);
 
     server.abort();
     let _ = std::fs::remove_dir_all(&dir);
@@ -552,9 +542,7 @@ async fn generation_bump_aborts_stream_promptly() {
 
     let started = tokio::time::Instant::now();
     generation.fetch_add(1, Ordering::SeqCst);
-    let exit = join_with_timeout(handle)
-        .await
-        .expect("run_stream must not error against a healthy server");
+    let exit = join_with_timeout(handle).await;
     assert_eq!(exit, StreamExit::PlanChanged);
     let elapsed = started.elapsed();
     assert!(
@@ -596,11 +584,7 @@ async fn server_drop_mid_stream_yields_disconnected_not_a_hang() {
 
     kill_server(server).await;
 
-    let result = join_with_timeout(handle).await;
-    match result {
-        Ok(StreamExit::Disconnected) => {}
-        other => panic!("expected Ok(StreamExit::Disconnected), got {other:?}"),
-    }
+    assert_eq!(join_with_timeout(handle).await, StreamExit::Disconnected);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -643,9 +627,7 @@ async fn multi_stop_query_delivers_updates_for_both_stops() {
     assert_eq!(b.items.first().map(|i| i.minutes), Some(9));
 
     kill_server(server).await;
-    let exit = join_with_timeout(handle)
-        .await
-        .expect("run_stream must not error against a healthy server");
+    let exit = join_with_timeout(handle).await;
     assert_eq!(exit, StreamExit::Disconnected);
 
     let _ = std::fs::remove_dir_all(&dir);

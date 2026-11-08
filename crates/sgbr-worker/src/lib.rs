@@ -16,3 +16,5 @@ pub mod registry;
 pub mod routes;
 pub mod state;
 pub mod store;
+#[cfg(test)]
+mod test_support;

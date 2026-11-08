@@ -5,7 +5,8 @@
 //! missing catalog is refreshed on a background thread and swapped in.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use time::OffsetDateTime;
@@ -20,12 +21,16 @@ use crate::{AppWindow, StopResult, WORKER_URL, credentials_path, load_credential
 /// Catalog is shared with a background refresh thread, so it's `Arc<Mutex>`.
 pub type Catalog = Arc<Mutex<Option<BusCatalog>>>;
 
+/// Set while a background fetch is running, so the periodic retry (the 15s
+/// timer in `run_app`) never stacks a second fetch on top of a slow one.
+static REFRESH_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
 /// Run `f` with a borrow of the catalog, tolerating lock poisoning.
 pub fn with_catalog<R>(catalog: &Catalog, f: impl FnOnce(Option<&BusCatalog>) -> R) -> R {
-    match catalog.lock() {
-        Ok(guard) => f(guard.as_ref()),
-        Err(poisoned) => f(poisoned.into_inner().as_ref()),
-    }
+    f(catalog
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref())
 }
 
 pub fn catalog_path(store_path: &Path) -> PathBuf {
@@ -55,14 +60,16 @@ pub fn refresh_search(window: &AppWindow, catalog: &Catalog) {
 
 /// If the catalog is missing or stale (and worker credentials are available),
 /// fetch a fresh one from the worker on a background thread, persist it, swap
-/// it in, and refresh the UI.
+/// it in, and refresh the UI. Cheap to call repeatedly: it returns at once
+/// when nothing is needed or a fetch is already in flight, so the 15s timer
+/// retries a failed fetch (worker still warming up, no signal) for free.
 pub fn spawn_refresh_if_stale(catalog: &Catalog, window: &AppWindow, store_path: &Path) {
     let Some(creds) = load_credentials(&credentials_path(store_path)) else {
         return;
     };
     let now = now_sgt();
     let needs = with_catalog(catalog, |c| c.is_none_or(|k| k.is_stale(now)));
-    if !needs {
+    if !needs || REFRESH_IN_FLIGHT.swap(true, Ordering::AcqRel) {
         return;
     }
     let catalog = Arc::clone(catalog);
@@ -73,7 +80,9 @@ pub fn spawn_refresh_if_stale(catalog: &Catalog, window: &AppWindow, store_path:
         token: creds.token,
     };
     std::thread::spawn(move || {
-        let Ok(fresh) = fetch_catalog(&cfg, OffsetDateTime::now_utc()) else {
+        let fetched = fetch_catalog(&cfg, OffsetDateTime::now_utc());
+        REFRESH_IN_FLIGHT.store(false, Ordering::Release);
+        let Ok(fresh) = fetched else {
             return;
         };
         let _ = catalog_store::save(&fresh, &cat_path);

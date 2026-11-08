@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::commute::model::Commute;
 use crate::error::CoreError;
+use crate::json_file;
 
 /// The full, ordered list of configured commutes. Order is the user's display
 /// order; the UI reorders by mutating `commutes`.
@@ -37,18 +38,10 @@ impl CommuteStore {
         }
     }
 
-    /// Persist the store to `path`, creating parent directories as needed.
-    /// Writes to a sibling temp file then renames, so a crash mid-write cannot
-    /// leave a half-written settings file.
+    /// Persist the store to `path` as pretty JSON, atomically (see
+    /// [`json_file::write_atomic`]), creating parent directories as needed.
     pub fn save(&self, path: &Path) -> Result<(), CoreError> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| CoreError::Io(e.to_string()))?;
-        }
-        let json = self.to_json()?;
-        let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, json).map_err(|e| CoreError::Io(e.to_string()))?;
-        fs::rename(&tmp, path).map_err(|e| CoreError::Io(e.to_string()))?;
-        Ok(())
+        json_file::write_atomic(path, self.to_json()?.as_bytes())
     }
 }
 

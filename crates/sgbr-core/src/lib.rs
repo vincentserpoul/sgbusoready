@@ -4,5 +4,6 @@
 pub mod bus_catalog;
 pub mod commute;
 pub mod error;
+pub mod json_file;
 pub mod lta;
 pub mod worker;

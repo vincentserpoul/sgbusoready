@@ -37,8 +37,12 @@ pub struct ArrivalsFeed {
     first: Mutex<bool>,
     first_cv: Condvar,
     /// Change notifications, fired (on the stream thread) after every
-    /// applied update.
+    /// applied update and when the worker rejects the token.
     listeners: Mutex<Vec<Box<dyn Fn() + Send>>>,
+    /// The bearer token the worker last answered with `401`/`403` (device
+    /// revoked). No stream is started with it again; presenting a different
+    /// token (a fresh registration) clears it.
+    rejected_token: Mutex<Option<String>>,
 }
 
 /// The single process-wide feed instance.
@@ -69,6 +73,7 @@ impl ArrivalsFeed {
             first: Mutex::new(false),
             first_cv: Condvar::new(),
             listeners: Mutex::new(Vec::new()),
+            rejected_token: Mutex::new(None),
         }
     }
 
@@ -92,13 +97,41 @@ impl ArrivalsFeed {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    fn lock_rejected(&self) -> MutexGuard<'_, Option<String>> {
+        self.rejected_token
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// True once the worker has rejected the current credentials (`401`/`403`
+    /// on the stream) and no newer token has been presented since. The UI
+    /// uses this to drop the dead credentials and return to the invite screen.
+    pub fn auth_rejected(&self) -> bool {
+        self.lock_rejected().is_some()
+    }
+
+    /// Whether `token` is the one the worker rejected. A different token
+    /// clears the rejection (the device re-registered).
+    fn is_rejected(&self, token: &str) -> bool {
+        let mut rejected = self.lock_rejected();
+        match rejected.as_deref() {
+            Some(bad) if bad == token => true,
+            Some(_) => {
+                *rejected = None;
+                false
+            }
+            None => false,
+        }
+    }
+
     /// Update the desired subscription set. A no-op if the normalized plan
     /// is unchanged and the stream thread's state is already consistent with
     /// it (running when there's something to track, absent when there's
-    /// nothing or no credentials yet). Otherwise stores the new plan, bumps
-    /// `generation` so any live stream thread reconnects with a fresh query,
-    /// and — if there's something to track and credentials are available —
-    /// spawns the stream thread when one isn't already running.
+    /// nothing, no credentials yet, or only rejected ones). Otherwise stores
+    /// the new plan, bumps `generation` so any live stream thread reconnects
+    /// with a fresh query, and — if there's something to track and usable
+    /// credentials are available — spawns the stream thread when one isn't
+    /// already running.
     pub fn set_plans(
         &'static self,
         plans: Vec<StopPlan>,
@@ -106,6 +139,8 @@ impl ArrivalsFeed {
         base_url: &str,
     ) {
         let normalized = normalize(plans);
+        // `None` when there is nothing usable to stream with.
+        let creds = creds.filter(|c| !self.is_rejected(&c.token));
         let unchanged = *self.lock_plans() == normalized;
         let already_running = self.running.load(Ordering::Acquire);
         let thread_state_consistent = normalized.is_empty() || already_running || creds.is_none();
@@ -132,14 +167,22 @@ impl ArrivalsFeed {
     }
 
     /// The background stream loop: reconnects on plan changes, backs off on
-    /// disconnects, exits once the plan goes empty.
+    /// disconnects, exits once the plan goes empty or the token is rejected.
     fn run_loop(&'static self, cfg: &WorkerConfig) {
         let mut backoff_secs: u64 = 1;
         loop {
             let my_gen = self.generation.load(Ordering::SeqCst);
             let plans = self.lock_plans().clone();
             if plans.is_empty() {
-                break;
+                self.running.store(false, Ordering::Release);
+                // A `set_plans` that stored a non-empty plan between the read
+                // above and that store saw `running == true` and did not
+                // spawn — so reclaim this thread instead of leaving the plan
+                // orphaned until some later `set_plans` call notices.
+                if self.lock_plans().is_empty() || self.running.swap(true, Ordering::AcqRel) {
+                    return;
+                }
+                continue;
             }
             let query = stream_query(&plans);
             let mut got_update = false;
@@ -148,14 +191,19 @@ impl ArrivalsFeed {
                 self.apply_update(update);
             });
             match exit {
-                Ok(StreamExit::PlanChanged) => {
+                StreamExit::PlanChanged => {
                     backoff_secs = 1;
                 }
-                // `Stopped` is reserved for a future orchestrator loop and
-                // never produced by `run_stream` today; treat it as a clean
-                // exit rather than folding it into the reconnect path below.
-                Ok(StreamExit::Stopped) => break,
-                Ok(StreamExit::Disconnected) | Err(_) => {
+                StreamExit::Unauthorized => {
+                    // Retrying with the same token can never succeed: record
+                    // it (so `set_plans` won't respawn with it), stop, and let
+                    // listeners surface the revocation.
+                    *self.lock_rejected() = Some(cfg.token.clone());
+                    self.running.store(false, Ordering::Release);
+                    self.notify_listeners();
+                    return;
+                }
+                StreamExit::Disconnected => {
                     if got_update {
                         backoff_secs = 1;
                     }
@@ -164,7 +212,6 @@ impl ArrivalsFeed {
                 }
             }
         }
-        self.running.store(false, Ordering::Release);
     }
 
     /// Sleep up to `secs`, in <=1s slices, abandoning early the moment
@@ -202,16 +249,11 @@ impl ArrivalsFeed {
     }
 
     /// Block up to `timeout` for the first-ever snapshot to arrive; `true` if
-    /// one has (or arrives in time), `false` on timeout. Not called anywhere
-    /// yet in this phase — the Android cold-start path (Phase 5) is its
-    /// first caller; exercised directly by a unit test below in the
-    /// meantime.
+    /// one has (or arrives in time), `false` on timeout. Used by the Android
+    /// bridge's cold-start render (`android_bridge::render_active`).
     #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "consumed by the Phase-5 Android bridge cold start; exercised directly by a unit test until then"
-        )
+        not(any(test, target_os = "android")),
+        allow(dead_code, reason = "only the Android bridge calls this")
     )]
     pub fn wait_first(&self, timeout: Duration) -> bool {
         let first = self.lock_first();
@@ -306,6 +348,38 @@ mod tests {
         let gen_after_first = feed.generation.load(Ordering::SeqCst);
         feed.set_plans(vec![], None, "http://example.invalid");
         assert!(feed.generation.load(Ordering::SeqCst) > gen_after_first);
+    }
+
+    #[test]
+    fn rejected_token_blocks_respawn_until_a_new_token_appears() {
+        use sgbr_core::worker::credentials::WorkerCredentials;
+        let feed = fresh();
+        let creds = |token: &str| WorkerCredentials {
+            token: token.to_owned(),
+            device_id: "d".to_owned(),
+            secret_seed_b64: String::new(),
+            pubkey_b64: String::new(),
+        };
+        *feed.lock_rejected() = Some("dead".to_owned());
+        assert!(feed.auth_rejected());
+
+        // Same token: treated like "no credentials" — no thread, no respawn.
+        feed.set_plans(
+            vec![plan("83139", &["15"])],
+            Some(&creds("dead")),
+            "http://example.invalid",
+        );
+        assert!(feed.auth_rejected());
+        assert!(!feed.running.load(Ordering::SeqCst));
+
+        // A fresh token clears the rejection (and would spawn a stream; the
+        // URL is unresolvable so the thread exits on its own).
+        feed.set_plans(
+            vec![plan("83139", &["15"])],
+            Some(&creds("fresh")),
+            "http://example.invalid",
+        );
+        assert!(!feed.auth_rejected());
     }
 
     #[test]

@@ -204,7 +204,9 @@ impl Drop for Subscription {
 }
 
 /// Poll `code` forever at `interval`: fetch on a blocking thread, publish a
-/// fresh [`Snapshot`] on success, log and keep the last value on failure.
+/// fresh [`Snapshot`] on success; on failure log, keep the last value, and
+/// still wake every subscriber so it re-renders the old snapshot against the
+/// current clock (otherwise countdowns would freeze for the whole outage).
 /// Runs until the owning [`tokio::task::JoinHandle`] is aborted (last
 /// subscriber dropped).
 async fn poll_loop(
@@ -228,26 +230,15 @@ async fn poll_loop(
             }
             Ok(Err(e)) => {
                 tracing::warn!("arrival fetch failed for stop {code}: {e}");
+                tx.send_modify(|_unchanged| {});
             }
             Err(e) => {
                 tracing::warn!("arrival fetch task did not complete for stop {code}: {e}");
+                tx.send_modify(|_unchanged| {});
             }
         }
         tokio::time::sleep(interval).await;
     }
-}
-
-/// A registry backed by a fetcher that always fails, for tests of routes
-/// that don't exercise the arrivals stream but still need an `AppState`.
-#[cfg(test)]
-pub fn test_registry() -> Arc<Registry> {
-    struct NullFetcher;
-    impl ArrivalFetcher for NullFetcher {
-        fn fetch(&self, _stop_code: &str) -> Result<BusArrivalResponse, CoreError> {
-            Err(CoreError::Http("test fetcher: no network".to_owned()))
-        }
-    }
-    Registry::new(Arc::new(NullFetcher), Duration::from_secs(15))
 }
 
 #[cfg(test)]
@@ -379,6 +370,24 @@ mod tests {
 
         drop(sub1);
         drop(sub2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failed_polls_still_wake_subscribers() {
+        #[derive(Debug)]
+        struct FailingFetcher;
+        impl ArrivalFetcher for FailingFetcher {
+            fn fetch(&self, _stop_code: &str) -> Result<BusArrivalResponse, CoreError> {
+                Err(CoreError::Http("upstream down".to_owned()))
+            }
+        }
+        let registry = Registry::new(Arc::new(FailingFetcher), Duration::from_secs(15));
+        let sub = registry.subscribe("83139");
+        let mut rx = sub.rx.clone();
+        // Would hang forever if a failed poll published nothing.
+        wait_for_change(&mut rx).await;
+        assert!(rx.borrow().is_none(), "no snapshot exists, only a wake-up");
+        drop(sub);
     }
 
     /// Confirms the specific `WatchStream` semantics the SSE handler relies

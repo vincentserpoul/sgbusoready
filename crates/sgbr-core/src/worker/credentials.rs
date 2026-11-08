@@ -1,12 +1,12 @@
-//! Persisted worker device credentials — atomic JSON cache, mirrors
-//! `bus_catalog::store` / `commute::store`.
+//! Persisted worker device credentials — atomic JSON cache (see
+//! `crate::json_file`).
 
-use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
+use crate::json_file;
 
 /// Device identity + bearer token issued by the worker at registration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,8 +24,7 @@ pub struct WorkerCredentials {
 /// [`CoreError::Io`] if the file can't be read, [`CoreError::Parse`] if it
 /// isn't valid JSON.
 pub fn load(path: &Path) -> Result<WorkerCredentials, CoreError> {
-    let bytes = fs::read(path).map_err(|e| CoreError::Io(e.to_string()))?;
-    serde_json::from_slice(&bytes).map_err(|e| CoreError::Parse(e.to_string()))
+    json_file::load(path)
 }
 
 impl WorkerCredentials {
@@ -36,14 +35,7 @@ impl WorkerCredentials {
     /// [`CoreError::Io`] on any filesystem failure, [`CoreError::Parse`] if
     /// serialization somehow fails.
     pub fn save(&self, path: &Path) -> Result<(), CoreError> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| CoreError::Io(e.to_string()))?;
-        }
-        let bytes = serde_json::to_vec(self).map_err(|e| CoreError::Parse(e.to_string()))?;
-        let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, &bytes).map_err(|e| CoreError::Io(e.to_string()))?;
-        fs::rename(&tmp, path).map_err(|e| CoreError::Io(e.to_string()))?;
-        Ok(())
+        json_file::save(self, path)
     }
 }
 

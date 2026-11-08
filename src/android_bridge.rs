@@ -88,6 +88,11 @@ fn render_active(files_dir: &str, now: OffsetDateTime) -> String {
     // snapshot so the very first render isn't "no buses" across the board.
     // The bool result is ignored — proceed either way.
     let _ = feed().wait_first(Duration::from_secs(3));
+    if feed().auth_rejected() {
+        // The worker rejected our token (device revoked): no notification;
+        // the app's UI drops the dead credentials and asks for a new invite.
+        return String::new();
+    }
     // Plans already carry the per-stop union of tracked buses, and the
     // worker's SSE frames are filtered to exactly the services requested in
     // the stream query (built from these same plans via `stream_query`), so

@@ -18,23 +18,22 @@ const REFRESH_CHECK_INTERVAL: Duration = Duration::from_hours(1);
 /// Catalog older than this triggers a refetch on the next check.
 const REFRESH_AGE_THRESHOLD_SECS: i64 = 24 * 60 * 60;
 
+/// While the cache is still empty every catalog route answers 503, so a
+/// failed fetch is retried on this backoff (doubling up to the cap) rather
+/// than after a full `REFRESH_CHECK_INTERVAL`.
+const EMPTY_RETRY_INITIAL: Duration = Duration::from_secs(30);
+const EMPTY_RETRY_MAX: Duration = Duration::from_mins(10);
+
 const CATALOG_FILE_NAME: &str = "catalog.json";
 
-/// The last successfully fetched (or disk-loaded) catalog, if any.
+/// The last successfully fetched (or disk-loaded) catalog, if any. `Default`
+/// is the empty cache (before the first successful fetch/load).
 #[derive(Debug, Default)]
 pub struct CatalogCache {
     inner: RwLock<Option<Arc<BusCatalog>>>,
 }
 
 impl CatalogCache {
-    /// An empty cache — before the first successful fetch/load.
-    #[must_use]
-    pub fn empty() -> Self {
-        Self {
-            inner: RwLock::new(None),
-        }
-    }
-
     /// Seed the cache with an already-known catalog (used by the refresh
     /// loop after a successful fetch, and directly by tests).
     #[must_use]
@@ -44,13 +43,13 @@ impl CatalogCache {
         }
     }
 
-    /// Try to load `{data_dir}/catalog.json`; fall back to [`Self::empty`] on
+    /// Try to load `{data_dir}/catalog.json`; fall back to the empty cache on
     /// any failure (missing file, corrupt JSON — the refresh loop self-heals).
     #[must_use]
     pub fn load_or_empty(data_dir: &Path) -> Self {
         catalog_store::load(&data_dir.join(CATALOG_FILE_NAME))
             .ok()
-            .map_or_else(Self::empty, Self::with_catalog)
+            .map_or_else(Self::default, Self::with_catalog)
     }
 
     /// The current catalog, if the cache has ever been populated.
@@ -69,53 +68,72 @@ const fn is_stale(catalog: &BusCatalog, now: OffsetDateTime) -> bool {
 
 /// Runs forever: on an empty or >24h-stale cache, fetch a fresh catalog from
 /// LTA on a blocking thread, persist it to disk, and swap it into `cache`.
-/// Sleeps `REFRESH_CHECK_INTERVAL` between checks; the first check runs
-/// immediately. Fetch failures are logged and the previous value is kept.
+/// The first check runs immediately; afterwards it sleeps
+/// `REFRESH_CHECK_INTERVAL` while a catalog is held, or the short
+/// `EMPTY_RETRY_*` backoff while the cache is still empty. Fetch failures are
+/// logged and the previous value is kept.
 pub async fn run_refresh_loop(cache: Arc<CatalogCache>, account_key: String, data_dir: PathBuf) {
     let catalog_path = data_dir.join(CATALOG_FILE_NAME);
+    let mut empty_retry = EMPTY_RETRY_INITIAL;
     loop {
         let needs_refresh = match cache.snapshot().await {
             None => true,
             Some(existing) => is_stale(&existing, OffsetDateTime::now_utc()),
         };
         if needs_refresh {
-            refresh_once(&cache, &account_key, &catalog_path).await;
+            refresh_once(&cache, account_key.clone(), &catalog_path).await;
         }
-        tokio::time::sleep(REFRESH_CHECK_INTERVAL).await;
+        let cache_empty = cache.snapshot().await.is_none();
+        tokio::time::sleep(next_sleep(cache_empty, &mut empty_retry)).await;
     }
 }
 
-async fn refresh_once(cache: &Arc<CatalogCache>, account_key: &str, catalog_path: &Path) {
-    match fetch_blocking(account_key.to_owned()).await {
-        Ok(catalog) => apply_fetched_catalog(cache, catalog, catalog_path).await,
-        Err(e) => tracing::warn!("catalog refresh failed: {e}"),
+/// How long to sleep before the next check: the regular interval once a
+/// catalog is held (resetting the backoff), else the current backoff step,
+/// which then doubles up to `EMPTY_RETRY_MAX`.
+fn next_sleep(cache_empty: bool, empty_retry: &mut Duration) -> Duration {
+    if cache_empty {
+        let now = *empty_retry;
+        *empty_retry = (now * 2).min(EMPTY_RETRY_MAX);
+        now
+    } else {
+        *empty_retry = EMPTY_RETRY_INITIAL;
+        REFRESH_CHECK_INTERVAL
     }
 }
 
-/// Run the blocking upstream fetch on a dedicated thread; flattens both the
-/// join failure and the fetch failure into one `String` for logging.
-async fn fetch_blocking(account_key: String) -> Result<BusCatalog, String> {
-    let now = OffsetDateTime::now_utc();
-    let joined = tokio::task::spawn_blocking(move || fetch_catalog(&account_key, now))
-        .await
-        .map_err(|e| format!("refresh task did not complete: {e}"))?;
-    joined.map_err(|e| e.to_string())
-}
-
-async fn apply_fetched_catalog(
-    cache: &Arc<CatalogCache>,
-    catalog: BusCatalog,
-    catalog_path: &Path,
-) {
+/// One refresh attempt: fetch upstream on a blocking thread, persist to disk,
+/// swap into `cache`. Any failure is logged and the previous value is kept.
+async fn refresh_once(cache: &CatalogCache, account_key: String, catalog_path: &Path) {
+    let catalog = match fetch_blocking(account_key).await {
+        Ok(catalog) => catalog,
+        Err(e) => {
+            tracing::warn!("catalog refresh failed: {e}");
+            return;
+        }
+    };
     if let Err(e) = catalog_store::save(&catalog, catalog_path) {
         tracing::warn!("failed to persist catalog to disk: {e}");
     }
     cache.set(catalog).await;
 }
 
+/// Run the blocking upstream fetch on a dedicated thread; flattens the join
+/// failure and the fetch failure into one message for logging.
+async fn fetch_blocking(account_key: String) -> Result<BusCatalog, String> {
+    let now = OffsetDateTime::now_utc();
+    tokio::task::spawn_blocking(move || fetch_catalog(&account_key, now))
+        .await
+        .map_err(|e| format!("task did not complete: {e}"))?
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CatalogCache, is_stale};
+    use super::{
+        CatalogCache, EMPTY_RETRY_INITIAL, EMPTY_RETRY_MAX, REFRESH_CHECK_INTERVAL, is_stale,
+        next_sleep,
+    };
     use sgbr_core::bus_catalog::model::{BusCatalog, BusStop};
     use std::collections::BTreeMap;
     use time::OffsetDateTime;
@@ -136,7 +154,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_cache_has_no_snapshot() {
-        let cache = CatalogCache::empty();
+        let cache = CatalogCache::default();
         assert!(cache.snapshot().await.is_none());
     }
 
@@ -156,6 +174,19 @@ mod tests {
             .unwrap_or(OffsetDateTime::UNIX_EPOCH);
         assert!(!is_stale(&catalog, fresh));
         assert!(is_stale(&catalog, stale));
+    }
+
+    #[test]
+    fn empty_cache_backs_off_then_resets_once_populated() {
+        let mut retry = EMPTY_RETRY_INITIAL;
+        assert_eq!(next_sleep(true, &mut retry), EMPTY_RETRY_INITIAL);
+        assert_eq!(next_sleep(true, &mut retry), EMPTY_RETRY_INITIAL * 2);
+        for _ in 0..10 {
+            next_sleep(true, &mut retry);
+        }
+        assert_eq!(next_sleep(true, &mut retry), EMPTY_RETRY_MAX, "capped");
+        assert_eq!(next_sleep(false, &mut retry), REFRESH_CHECK_INTERVAL);
+        assert_eq!(retry, EMPTY_RETRY_INITIAL, "reset once a catalog is held");
     }
 
     #[test]

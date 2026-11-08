@@ -59,7 +59,7 @@ mod tests {
     use axum::response::IntoResponse;
 
     #[test]
-    fn catalog_not_ready_is_503_with_exact_body() {
+    fn catalog_not_ready_is_503() {
         let response = ApiError::CatalogNotReady.into_response();
         assert_eq!(
             response.status(),

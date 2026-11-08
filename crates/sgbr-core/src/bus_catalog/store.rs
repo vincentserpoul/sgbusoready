@@ -1,28 +1,20 @@
-//! Atomic JSON cache for the catalog (mirrors `commute::store`).
+//! Atomic JSON cache for the catalog (see `crate::json_file`).
 
-use std::fs;
 use std::path::Path;
 
 use crate::bus_catalog::model::BusCatalog;
 use crate::error::CoreError;
+use crate::json_file;
 
 /// Load a catalog from `path`. A missing or invalid file is an error; the caller
 /// may then fetch a fresh one.
 pub fn load(path: &Path) -> Result<BusCatalog, CoreError> {
-    let bytes = fs::read(path).map_err(|e| CoreError::Io(e.to_string()))?;
-    serde_json::from_slice(&bytes).map_err(|e| CoreError::Parse(e.to_string()))
+    json_file::load(path)
 }
 
 /// Save `catalog` to `path` atomically (temp file + rename), creating parents.
 pub fn save(catalog: &BusCatalog, path: &Path) -> Result<(), CoreError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| CoreError::Io(e.to_string()))?;
-    }
-    let bytes = serde_json::to_vec(catalog).map_err(|e| CoreError::Parse(e.to_string()))?;
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, &bytes).map_err(|e| CoreError::Io(e.to_string()))?;
-    fs::rename(&tmp, path).map_err(|e| CoreError::Io(e.to_string()))?;
-    Ok(())
+    json_file::save(catalog, path)
 }
 
 #[cfg(test)]

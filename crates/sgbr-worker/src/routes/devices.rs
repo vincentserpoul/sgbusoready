@@ -73,253 +73,158 @@ fn validate_shape(req: &RegisterRequest) -> Result<(), ApiError> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::router;
-    use crate::catalog::CatalogCache;
-    use crate::config::Config;
-    use crate::registry::test_registry;
-    use crate::state::AppState;
-    use crate::store::DeviceStore;
+    use crate::test_support::{TestState, bearer_req, json_body, req};
     use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::StatusCode;
     use base64::Engine as _;
-    use http_body_util::BodyExt as _;
     use sgbr_core::worker::auth::{generate_keypair, sign_registration};
     use sgbr_core::worker::protocol::{RegisterRequest, RegisterResponse};
-    use std::path::PathBuf;
-    use std::sync::Arc;
-    use tower::ServiceExt as _;
 
-    fn tmp_state(name: &str) -> (AppState, PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "sgbr_worker_devices_test_{}_{name}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create tmp dir");
-        let store = DeviceStore::load_or_default(dir.join("store.json")).expect("load store");
-        let config = Config {
-            lta_account_key: "unused".to_owned(),
-            bind: "127.0.0.1:0".to_owned(),
-            data_dir: dir.clone(),
-            admin_token: "test-admin-token".to_owned(),
-            poll_secs: 15,
-        };
-        let state = AppState::new(
-            Arc::new(config),
-            Arc::new(store),
-            Arc::new(CatalogCache::empty()),
-            test_registry(),
-        );
-        (state, dir)
+    async fn post_devices(t: &TestState, body: &RegisterRequest) -> axum::response::Response {
+        t.send_json(req("POST", "/v1/devices"), body).await
     }
 
-    async fn post_devices(state: AppState, body: &RegisterRequest) -> axum::response::Response {
-        router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/devices")
-                    .header("content-type", "application/json")
-                    .body(Body::from(serde_json::to_vec(body).expect("serialize")))
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response")
+    /// A syntactically valid registration for a freshly minted invite.
+    fn valid_request(t: &TestState) -> RegisterRequest {
+        let invite = t.state.store().mint_invite().expect("mint invite");
+        let (seed, pubkey) = generate_keypair().expect("keygen");
+        RegisterRequest {
+            signature: sign_registration(&seed, &invite.code),
+            invite_code: invite.code,
+            pubkey,
+        }
     }
 
     #[tokio::test]
     async fn register_happy_path_returns_201_and_working_token() {
-        let (state, dir) = tmp_state("happy");
-        let invite = state.store().mint_invite().expect("mint invite");
-        let (seed, pubkey) = generate_keypair().expect("keygen");
-        let signature = sign_registration(&seed, &invite.code);
-        let req = RegisterRequest {
-            invite_code: invite.code.clone(),
-            pubkey,
-            signature,
-        };
-
-        let response = post_devices(state.clone(), &req).await;
+        let t = TestState::new("devices-happy");
+        let response = post_devices(&t, &valid_request(&t)).await;
         assert_eq!(response.status(), StatusCode::CREATED);
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .expect("read body")
-            .to_bytes();
-        let body: RegisterResponse = serde_json::from_slice(&bytes).expect("parse body");
+        let body: RegisterResponse =
+            serde_json::from_value(json_body(response).await).expect("parse body");
         assert_eq!(body.device_id.len(), 16);
         assert_eq!(body.token.len(), 64);
 
-        // The returned token authenticates against a Bearer-guarded route.
-        let auth_response = router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/bus-stops")
-                    .header("authorization", format!("Bearer {}", body.token))
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
-        // No catalog loaded yet in this state, but auth itself must pass:
-        // that's a 503 (catalog not ready), not a 401.
+        // The returned token authenticates against a Bearer-guarded route. No
+        // catalog is loaded in this state, so auth passing shows as a 503
+        // (catalog not ready), not a 401.
+        let auth_response = t
+            .send(bearer_req("GET", "/v1/bus-stops", &body.token))
+            .await;
         assert_eq!(auth_response.status(), StatusCode::SERVICE_UNAVAILABLE);
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn bad_signature_is_403() {
-        let (state, dir) = tmp_state("bad-sig");
-        let invite = state.store().mint_invite().expect("mint invite");
-        let (seed, pubkey) = generate_keypair().expect("keygen");
-        let mut signature = sign_registration(&seed, &invite.code);
+        let t = TestState::new("devices-bad-sig");
+        let mut req = valid_request(&t);
         // Corrupt the signature but keep it valid base64 of the right length.
-        signature.replace_range(0..1, if signature.starts_with('A') { "B" } else { "A" });
-        let req = RegisterRequest {
-            invite_code: invite.code,
-            pubkey,
-            signature,
+        let flipped = if req.signature.starts_with('A') {
+            "B"
+        } else {
+            "A"
         };
-
-        let response = post_devices(state, &req).await;
+        req.signature.replace_range(0..1, flipped);
+        let response = post_devices(&t, &req).await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn unknown_invite_is_403() {
-        let (state, dir) = tmp_state("unknown-invite");
+        let t = TestState::new("devices-unknown-invite");
         let (seed, pubkey) = generate_keypair().expect("keygen");
-        let signature = sign_registration(&seed, "NOPE-CODE");
         let req = RegisterRequest {
             invite_code: "NOPE-CODE".to_owned(),
             pubkey,
-            signature,
+            signature: sign_registration(&seed, "NOPE-CODE"),
         };
-
-        let response = post_devices(state, &req).await;
+        let response = post_devices(&t, &req).await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn reused_invite_is_403() {
-        let (state, dir) = tmp_state("reused-invite");
-        let invite = state.store().mint_invite().expect("mint invite");
-        let (seed1, pubkey1) = generate_keypair().expect("keygen 1");
-        let signature1 = sign_registration(&seed1, &invite.code);
-        let first = post_devices(
-            state.clone(),
-            &RegisterRequest {
-                invite_code: invite.code.clone(),
-                pubkey: pubkey1,
-                signature: signature1,
-            },
-        )
-        .await;
+        let t = TestState::new("devices-reused-invite");
+        let first_req = valid_request(&t);
+        let first = post_devices(&t, &first_req).await;
         assert_eq!(first.status(), StatusCode::CREATED);
 
         let (seed2, pubkey2) = generate_keypair().expect("keygen 2");
-        let signature2 = sign_registration(&seed2, &invite.code);
         let second = post_devices(
-            state,
+            &t,
             &RegisterRequest {
-                invite_code: invite.code,
+                signature: sign_registration(&seed2, &first_req.invite_code),
+                invite_code: first_req.invite_code,
                 pubkey: pubkey2,
-                signature: signature2,
             },
         )
         .await;
         assert_eq!(second.status(), StatusCode::FORBIDDEN);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn malformed_base64_pubkey_is_400() {
-        let (state, dir) = tmp_state("malformed-pubkey");
-        let invite = state.store().mint_invite().expect("mint invite");
+        let t = TestState::new("devices-malformed-pubkey");
+        let invite = t.state.store().mint_invite().expect("mint invite");
         let req = RegisterRequest {
             invite_code: invite.code,
             pubkey: "not valid base64!!".to_owned(),
             signature: "AAAA".to_owned(),
         };
-        let response = post_devices(state, &req).await;
+        let response = post_devices(&t, &req).await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Read the response body and assert it is the `{"error": "<msg>"}`
-    /// envelope every failure must use; returns the `error` message.
+    /// Assert the body is the `{"error": "<msg>"}` envelope every failure
+    /// must use; returns the `error` message.
     async fn assert_error_envelope(response: axum::response::Response) -> String {
-        let bytes = response
-            .into_body()
-            .collect()
+        json_body(response)
             .await
-            .expect("read body")
-            .to_bytes();
-        let body: serde_json::Value =
-            serde_json::from_slice(&bytes).expect("error body must be JSON");
-        body.get("error")
+            .get("error")
             .and_then(|v| v.as_str())
             .expect("error body must have a string `error` field")
             .to_owned()
     }
 
+    async fn post_raw_json(t: &TestState, body: &'static str) -> axum::response::Response {
+        t.send_body(
+            req("POST", "/v1/devices").header("content-type", "application/json"),
+            Body::from(body),
+        )
+        .await
+    }
+
     #[tokio::test]
     async fn malformed_json_body_is_400_with_error_envelope() {
-        let (state, dir) = tmp_state("malformed-json");
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/devices")
-                    .header("content-type", "application/json")
-                    .body(Body::from("{not json"))
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let t = TestState::new("devices-malformed-json");
+        let response = post_raw_json(&t, "{not json").await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let message = assert_error_envelope(response).await;
-        assert!(!message.is_empty());
-        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!assert_error_envelope(response).await.is_empty());
     }
 
     #[tokio::test]
     async fn wrong_typed_field_is_400_with_error_envelope() {
-        let (state, dir) = tmp_state("wrong-typed-field");
+        let t = TestState::new("devices-wrong-typed-field");
         // Syntactically valid JSON, but `pubkey` is a number, not a string.
-        let body = r#"{"invite_code":"ABCD2345","pubkey":42,"signature":"AAAA"}"#;
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/devices")
-                    .header("content-type", "application/json")
-                    .body(Body::from(body))
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let response = post_raw_json(
+            &t,
+            r#"{"invite_code":"ABCD2345","pubkey":42,"signature":"AAAA"}"#,
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let message = assert_error_envelope(response).await;
-        assert!(!message.is_empty());
-        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!assert_error_envelope(response).await.is_empty());
     }
 
     #[tokio::test]
     async fn wrong_length_pubkey_is_400() {
-        let (state, dir) = tmp_state("wrong-length-pubkey");
-        let invite = state.store().mint_invite().expect("mint invite");
+        let t = TestState::new("devices-wrong-length-pubkey");
+        let invite = t.state.store().mint_invite().expect("mint invite");
         let req = RegisterRequest {
             invite_code: invite.code,
             pubkey: base64::engine::general_purpose::STANDARD.encode(b"too-short"),
             signature: base64::engine::general_purpose::STANDARD.encode([0_u8; 64]),
         };
-        let response = post_devices(state, &req).await;
+        let response = post_devices(&t, &req).await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

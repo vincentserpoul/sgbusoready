@@ -33,10 +33,6 @@ pub fn token_hash(token: &str) -> String {
 /// A device authenticated via `Authorization: Bearer <token>`.
 #[derive(Debug, Clone)]
 pub struct Device {
-    #[allow(
-        dead_code,
-        reason = "read by the Phase 2 SSE registry to scope per-device streams"
-    )]
     pub device_id: String,
 }
 

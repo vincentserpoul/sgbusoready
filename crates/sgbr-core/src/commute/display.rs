@@ -16,13 +16,6 @@ pub fn format_next_time(next_start: OffsetDateTime) -> String {
     format!("next {when}")
 }
 
-/// Build the in-app "see you soon" row for a commute that is not active now,
-/// e.g. `"see you soon · next Tue 08:00"`.
-#[must_use]
-pub fn format_see_you_soon(next_start: OffsetDateTime) -> String {
-    format!("see you soon · {}", format_next_time(next_start))
-}
-
 /// A coarse, human countdown for a positive number of `minutes`, e.g. `"45m"`,
 /// `"2h 25m"`, `"2h"`, `"1d 3h"`. Non-positive input renders as `"now"`.
 #[must_use]
@@ -104,8 +97,8 @@ pub fn format_active_notification(stops: &[StopArrivals]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_active_notification, format_countdown, format_next_time, format_see_you_soon,
-        format_stop_line, format_timeline_labels,
+        format_active_notification, format_countdown, format_next_time, format_stop_line,
+        format_timeline_labels,
     };
     use crate::lta::arrival::{ArrivalItem, StopArrivals};
     use time::macros::datetime;
@@ -151,20 +144,10 @@ mod tests {
     }
 
     #[test]
-    fn see_you_soon_formats_short_weekday_and_time() {
-        // Tuesday 2026-06-23 08:00.
+    fn next_time_zero_pads_hour_and_minute() {
         assert_eq!(
-            format_see_you_soon(datetime!(2026-06-23 08:00:00 +8)),
-            "see you soon · next Tue 08:00"
-        );
-    }
-
-    #[test]
-    fn see_you_soon_zero_pads_hour_and_minute() {
-        // Monday 2026-06-22 08:05 -> both fields zero-padded.
-        assert_eq!(
-            format_see_you_soon(datetime!(2026-06-22 08:05:00 +8)),
-            "see you soon · next Mon 08:05"
+            format_next_time(datetime!(2026-06-22 08:05:00 +8)),
+            "next Mon 08:05"
         );
     }
 

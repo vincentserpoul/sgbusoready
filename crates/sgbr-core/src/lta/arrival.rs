@@ -135,9 +135,8 @@ pub struct ArrivalItem {
 
 /// Build the arrival groups for the services in `tracked`, dropping past
 /// (negative-minute) arrivals and grouping same-minute buses, ascending by
-/// minute. The stop-agnostic core of [`stop_arrivals`] — also what the
-/// worker's SSE push path computes per stop (it has no display name to
-/// attach, only a stop code and a `data` payload).
+/// minute. This is what the worker's SSE push path computes per stop; the
+/// app wraps the result in a [`StopArrivals`] with the stop's cached name.
 #[must_use]
 pub fn arrival_items(
     tracked: &[String],
@@ -169,27 +168,9 @@ pub fn arrival_items(
         .collect()
 }
 
-/// Build a [`StopArrivals`] for `code`/`name` from `response`, keeping only the
-/// services in `tracked`, dropping past (negative-minute) arrivals, and grouping
-/// same-minute buses. Items are sorted ascending by minute.
-#[must_use]
-pub fn stop_arrivals(
-    code: &str,
-    name: &str,
-    tracked: &[String],
-    response: &BusArrivalResponse,
-    now: OffsetDateTime,
-) -> StopArrivals {
-    StopArrivals {
-        code: code.to_owned(),
-        name: name.to_owned(),
-        items: arrival_items(tracked, response, now),
-    }
-}
-
 #[cfg(test)]
-mod stop_arrivals_tests {
-    use super::{ArrivalItem, arrival_items, stop_arrivals};
+mod arrival_items_tests {
+    use super::{ArrivalItem, arrival_items};
     use crate::lta::model::BusArrivalResponse;
     use time::macros::datetime;
 
@@ -223,12 +204,10 @@ mod stop_arrivals_tests {
         let resp: BusArrivalResponse = serde_json::from_str(SAMPLE).expect("parse");
         let now = datetime!(2026-06-21 08:10:00 +8);
         let tracked = vec!["14".to_owned(), "14e".to_owned()];
-        let out = stop_arrivals("83139", "Opp Blk 123", &tracked, &resp, now);
-        assert_eq!(out.code, "83139");
-        assert_eq!(out.name, "Opp Blk 123");
+        let items = arrival_items(&tracked, &resp, now);
         // 999 excluded (untracked). 14 & 14e share minute 8; 14 also at 25.
         assert_eq!(
-            out.items,
+            items,
             vec![
                 ArrivalItem {
                     minutes: 8,
@@ -258,10 +237,10 @@ mod stop_arrivals_tests {
         let resp: BusArrivalResponse = serde_json::from_str(PAST).expect("parse");
         let now = datetime!(2026-06-21 08:10:00 +8);
         let tracked = vec!["14".to_owned()];
-        let out = stop_arrivals("83139", "Opp Blk 123", &tracked, &resp, now);
+        let items = arrival_items(&tracked, &resp, now);
         // 08:05 is in the past (-5m) -> dropped; only 08:18 (8m) kept.
         assert_eq!(
-            out.items,
+            items,
             vec![ArrivalItem {
                 minutes: 8,
                 buses: vec!["14".to_owned()],
@@ -274,18 +253,7 @@ mod stop_arrivals_tests {
         let resp: BusArrivalResponse = serde_json::from_str(SAMPLE).expect("parse");
         let now = datetime!(2026-06-21 08:10:00 +8);
         let tracked = vec!["77".to_owned()];
-        let out = stop_arrivals("83139", "Opp Blk 123", &tracked, &resp, now);
-        assert!(out.items.is_empty());
-    }
-
-    #[test]
-    fn arrival_items_matches_stop_arrivals_items() {
-        let resp: BusArrivalResponse = serde_json::from_str(SAMPLE).expect("parse");
-        let now = datetime!(2026-06-21 08:10:00 +8);
-        let tracked = vec!["14".to_owned(), "14e".to_owned()];
-        let items = arrival_items(&tracked, &resp, now);
-        let stop = stop_arrivals("83139", "Opp Blk 123", &tracked, &resp, now);
-        assert_eq!(items, stop.items);
+        assert!(arrival_items(&tracked, &resp, now).is_empty());
     }
 }
 

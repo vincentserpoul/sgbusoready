@@ -1,6 +1,8 @@
 //! List rows and timeline lanes: building the Slint `CommuteRow`/`StopLane`
 //! models, synchronously from the process-global arrivals feed (`feed.rs`) —
-//! no network on the UI thread.
+//! no network on the UI thread. Before the feed has anything cached a row
+//! simply renders its lanes without arrival tags, so there is no separate
+//! "skeleton" pass.
 
 use std::path::Path;
 
@@ -18,11 +20,6 @@ use crate::{
     AppWindow, ArrivalTag, CommuteRow, StopLane, WORKER_URL, credentials_path, load_credentials,
     now_sgt,
 };
-
-/// Card label: the commute's own label, or its first stop's name (+N).
-fn card_label(commute: &Commute) -> String {
-    commute.display_label()
-}
 
 /// The 7 weekday flags (Mon..Sun) of a commute's active days, for the day pills.
 fn day_flags(commute: &Commute) -> Vec<bool> {
@@ -48,54 +45,6 @@ fn counts_line(commute: &Commute) -> String {
     let stops = commute.stops.len();
     let buses: usize = commute.stops.iter().map(|s| s.buses.len()).sum();
     format!("{stops} stops · {buses} buses")
-}
-
-fn empty_lanes() -> ModelRc<StopLane> {
-    ModelRc::new(VecModel::from(Vec::<StopLane>::new()))
-}
-
-/// Skeleton lanes for an active commute: one lane per stop with its name but no
-/// arrival tags yet, so the timeline structure shows immediately while the live
-/// fetch (`spawn_arrivals`) is in flight.
-fn skeleton_lanes(commute: &Commute, now: OffsetDateTime) -> ModelRc<StopLane> {
-    let stops: Vec<StopArrivals> = commute
-        .stops
-        .iter()
-        .map(|s| StopArrivals {
-            code: s.code.clone(),
-            name: s.name.clone(),
-            items: Vec::new(),
-        })
-        .collect();
-    let (start, end) = format_timeline_labels(now, commute.scale_minutes());
-    lanes_model(&stops, i32::from(commute.scale_minutes()), &start, &end)
-}
-
-/// Build all list rows synchronously (no network): active rows get skeleton lanes
-/// until `spawn_arrivals` fills in live tags; inactive rows get the summary line.
-pub fn rebuild_rows(window: &AppWindow, store: &CommuteStore) {
-    let now = now_sgt();
-    let today = i32::from(now.weekday().number_days_from_monday());
-    let mut rows: Vec<CommuteRow> = Vec::new();
-    for (i, c) in store.commutes.iter().enumerate() {
-        let active = c.is_active_at(now);
-        rows.push(CommuteRow {
-            label: SharedString::from(card_label(c)),
-            active,
-            index: i32::try_from(i).unwrap_or(-1),
-            lanes: if active {
-                skeleton_lanes(c, now)
-            } else {
-                empty_lanes()
-            },
-            scale_max: i32::from(c.scale_minutes()),
-            days: ModelRc::new(VecModel::from(day_flags(c))),
-            today,
-            next_time: SharedString::from(next_time_line(c, now)),
-            counts: SharedString::from(counts_line(c)),
-        });
-    }
-    window.set_rows(ModelRc::new(VecModel::from(rows)));
 }
 
 /// Keep only the arrival groups (and, within each group, the buses) that are
@@ -246,7 +195,7 @@ pub fn refresh_arrivals(window: &AppWindow, store: &CommuteStore, store_path: &P
             (String::new(), String::new())
         };
         rows.push(CommuteRow {
-            label: SharedString::from(card_label(c)),
+            label: SharedString::from(c.display_label()),
             active,
             index: i32::try_from(i).unwrap_or(-1),
             lanes: lanes_model(&stops, scale, &start_label, &end_label),

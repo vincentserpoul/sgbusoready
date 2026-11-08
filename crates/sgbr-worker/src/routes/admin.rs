@@ -86,17 +86,8 @@ pub async fn revoke_device(
 
 #[cfg(test)]
 mod tests {
-    use super::super::router;
-    use crate::catalog::CatalogCache;
-    use crate::config::Config;
-    use crate::registry::test_registry;
-    use crate::state::AppState;
-    use crate::store::DeviceStore;
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
-    use http_body_util::BodyExt as _;
-    use std::sync::Arc;
-    use tower::ServiceExt as _;
+    use crate::test_support::{TestState, admin_req, bearer_req, json_body, req};
+    use axum::http::StatusCode;
 
     /// Matches `^[A-HJ-NP-Z2-9]{8}$` without pulling in a regex crate: 8
     /// chars from the invite alphabet (uppercase letters minus I/O, digits
@@ -109,192 +100,82 @@ mod tests {
             })
     }
 
-    fn state(name: &str) -> (AppState, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "sgbr_worker_admin_test_{}_{name}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create tmp dir");
-        let store = DeviceStore::load_or_default(dir.join("store.json")).expect("load store");
-        let config = Config {
-            lta_account_key: "unused".to_owned(),
-            bind: "127.0.0.1:0".to_owned(),
-            data_dir: dir.clone(),
-            admin_token: "test-admin-token".to_owned(),
-            poll_secs: 15,
-        };
-        let state = AppState::new(
-            Arc::new(config),
-            Arc::new(store),
-            Arc::new(CatalogCache::empty()),
-            test_registry(),
-        );
-        (state, dir)
-    }
-
     #[tokio::test]
     async fn missing_admin_token_is_401() {
-        let (state, dir) = state("missing-token");
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/admin/invites")
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let t = TestState::new("admin-missing-token");
+        let response = t.send(req("POST", "/v1/admin/invites")).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn wrong_admin_token_is_401() {
-        let (state, dir) = state("wrong-token");
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/admin/invites")
-                    .header("X-Admin-Token", "not-the-token")
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let t = TestState::new("admin-wrong-token");
+        let response = t
+            .send(req("POST", "/v1/admin/invites").header("X-Admin-Token", "not-the-token"))
+            .await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn mint_invite_returns_code_matching_expected_alphabet() {
-        let (state, dir) = state("mint");
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/admin/invites")
-                    .header("X-Admin-Token", "test-admin-token")
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let t = TestState::new("admin-mint");
+        let response = t.send(admin_req("POST", "/v1/admin/invites")).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .expect("read body")
-            .to_bytes();
-        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("parse body");
+        let body = json_body(response).await;
         let code = body["code"].as_str().expect("code field");
         assert!(
             matches_invite_code_shape(code),
             "code {code} has unexpected shape"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn revoke_then_bearer_auth_fails_and_revoke_unknown_is_404() {
-        let (state, dir) = state("revoke");
-        let invite = state.store().mint_invite().expect("mint invite");
-        let (_seed, pubkey) = sgbr_core::worker::auth::generate_keypair().expect("keygen");
-        let (device_id, token) = state
+        let t = TestState::new("admin-revoke");
+        let token = t.register_device();
+        let device_id = t
+            .state
             .store()
-            .register_device(&invite.code, &pubkey)
-            .expect("register");
+            .list_devices()
+            .pop()
+            .expect("one device")
+            .device_id;
 
         // Bearer works before revoke (503 because catalog is empty, not 401).
-        let before = router(state.clone())
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/bus-stops")
-                    .header("authorization", format!("Bearer {token}"))
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let before = t.send(bearer_req("GET", "/v1/bus-stops", &token)).await;
         assert_eq!(before.status(), StatusCode::SERVICE_UNAVAILABLE);
 
-        let revoke_response = router(state.clone())
-            .oneshot(
-                Request::builder()
-                    .method("DELETE")
-                    .uri(format!("/v1/admin/devices/{device_id}"))
-                    .header("X-Admin-Token", "test-admin-token")
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
-        assert_eq!(revoke_response.status(), StatusCode::NO_CONTENT);
+        let revoke_uri = format!("/v1/admin/devices/{device_id}");
+        let revoked = t.send(admin_req("DELETE", &revoke_uri)).await;
+        assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
 
-        let after = router(state.clone())
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/bus-stops")
-                    .header("authorization", format!("Bearer {token}"))
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let after = t.send(bearer_req("GET", "/v1/bus-stops", &token)).await;
         assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
 
-        let revoke_again = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("DELETE")
-                    .uri(format!("/v1/admin/devices/{device_id}"))
-                    .header("X-Admin-Token", "test-admin-token")
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let revoke_again = t.send(admin_req("DELETE", &revoke_uri)).await;
         assert_eq!(revoke_again.status(), StatusCode::NOT_FOUND);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn list_devices_reports_registered_device() {
-        let (state, dir) = state("list-devices");
-        let invite = state.store().mint_invite().expect("mint invite");
-        let (_seed, pubkey) = sgbr_core::worker::auth::generate_keypair().expect("keygen");
-        let (device_id, _token) = state
+        let t = TestState::new("admin-list-devices");
+        let _token = t.register_device();
+        let expected_id = t
+            .state
             .store()
-            .register_device(&invite.code, &pubkey)
-            .expect("register");
+            .list_devices()
+            .pop()
+            .expect("one device")
+            .device_id;
 
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/admin/devices")
-                    .header("X-Admin-Token", "test-admin-token")
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let response = t.send(admin_req("GET", "/v1/admin/devices")).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .expect("read body")
-            .to_bytes();
-        let devices: Vec<serde_json::Value> =
-            serde_json::from_slice(&bytes).expect("parse devices");
+        let devices = json_body(response).await;
+        let devices = devices.as_array().expect("array of devices");
         assert_eq!(devices.len(), 1);
         assert_eq!(
             devices.first().and_then(|d| d["device_id"].as_str()),
-            Some(device_id.as_str())
+            Some(expected_id.as_str())
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

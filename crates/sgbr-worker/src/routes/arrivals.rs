@@ -29,7 +29,6 @@ use crate::state::AppState;
 /// 25s).
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(25);
 
-const MIN_STOPS: usize = 1;
 const MAX_STOPS: usize = 16;
 const MAX_SERVICES: usize = 20;
 const CODE_LEN: usize = 5;
@@ -55,10 +54,12 @@ pub fn parse_stops(q: &str) -> Result<Vec<StopSpec>, ApiError> {
     if q.trim().is_empty() {
         return Err(ApiError::BadRequest("stops must not be empty".to_owned()));
     }
+    // `split` always yields at least one part, so only the upper bound needs
+    // checking; an empty part is rejected by `parse_one_stop`.
     let parts: Vec<&str> = q.split(',').collect();
-    if parts.len() < MIN_STOPS || parts.len() > MAX_STOPS {
+    if parts.len() > MAX_STOPS {
         return Err(ApiError::BadRequest(format!(
-            "stops must list between {MIN_STOPS} and {MAX_STOPS} stop entries"
+            "stops must list at most {MAX_STOPS} stop entries"
         )));
     }
     parts.into_iter().map(parse_one_stop).collect()
@@ -116,13 +117,18 @@ fn now_sgt() -> OffsetDateTime {
 
 pub async fn arrivals(
     State(state): State<AppState>,
-    _device: Device,
+    device: Device,
     Query(query): Query<StopsQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let raw = query
         .stops
         .ok_or_else(|| ApiError::BadRequest("missing stops parameter".to_owned()))?;
     let specs = parse_stops(&raw)?;
+    tracing::debug!(
+        device = %device.device_id,
+        stops = specs.len(),
+        "arrivals stream opened"
+    );
 
     let registry = Arc::clone(state.registry());
     let subs: Vec<Subscription> = specs
@@ -281,25 +287,18 @@ mod parse_tests {
 
 #[cfg(test)]
 mod handler_tests {
-    use super::super::router;
     use crate::catalog::CatalogCache;
-    use crate::config::Config;
     use crate::registry::{ArrivalFetcher, Registry};
-    use crate::state::AppState;
-    use crate::store::DeviceStore;
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use crate::test_support::{TestState, bearer_req, json_body, req};
+    use axum::http::StatusCode;
     use http_body_util::BodyExt as _;
     use sgbr_core::error::CoreError;
     use sgbr_core::lta::model::BusArrivalResponse;
-    use sgbr_core::worker::auth::generate_keypair;
     use sgbr_core::worker::protocol::StopUpdate;
     use sgbr_core::worker::sse::SseParser;
-    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
-    use tower::ServiceExt as _;
 
     /// Fetcher that replays a scripted sequence of responses (looping the
     /// last one once exhausted), and counts calls per stop.
@@ -351,107 +350,43 @@ mod handler_tests {
         serde_json::from_str(&body).expect("sample response must parse")
     }
 
-    fn tmp_state_with_fetcher(
-        name: &str,
-        fetcher: Arc<dyn ArrivalFetcher>,
-    ) -> (AppState, String, PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "sgbr_worker_arrivals_test_{}_{name}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create tmp dir");
-        let store = DeviceStore::load_or_default(dir.join("store.json")).expect("load store");
-        let invite = store.mint_invite().expect("mint invite");
-        let (_seed, pubkey) = generate_keypair().expect("keygen");
-        let (_device_id, token) = store
-            .register_device(&invite.code, &pubkey)
-            .expect("register device");
-        let config = Config {
-            lta_account_key: "unused".to_owned(),
-            bind: "127.0.0.1:0".to_owned(),
-            data_dir: dir.clone(),
-            admin_token: "test-admin-token".to_owned(),
-            poll_secs: 15,
-        };
-        // Fast poll interval: these tests advance real time a little (via
-        // short sleeps) rather than `tokio::time::pause`, since they drive
-        // the handler through the real router/body-stream machinery.
-        let registry = Registry::new(fetcher, Duration::from_millis(20));
-        let state = AppState::new(
-            Arc::new(config),
-            Arc::new(store),
-            Arc::new(CatalogCache::empty()),
-            registry,
+    /// A registered device over a registry driven by `script`. Fast poll
+    /// interval: these tests advance real time a little (via short sleeps)
+    /// rather than `tokio::time::pause`, since they drive the handler through
+    /// the real router/body-stream machinery.
+    fn scripted(name: &str, script: Vec<BusArrivalResponse>) -> (TestState, String) {
+        let registry = Registry::new(
+            Arc::new(ScriptedFetcher::new(script)),
+            Duration::from_millis(20),
         );
-        (state, token, dir)
+        let t = TestState::with(name, CatalogCache::default(), registry);
+        let token = t.register_device();
+        (t, token)
     }
 
     #[tokio::test]
     async fn missing_bearer_is_401() {
-        let (state, _token, dir) = tmp_state_with_fetcher(
-            "no-auth",
-            Arc::new(ScriptedFetcher::new(vec![response_with_arrival("15", 5)])),
-        );
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/arrivals?stops=83139:15")
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let (t, _token) = scripted("arrivals-no-auth", vec![response_with_arrival("15", 5)]);
+        let response = t.send(req("GET", "/v1/arrivals?stops=83139:15")).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn missing_stops_param_is_400_with_envelope() {
-        let (state, token, dir) = tmp_state_with_fetcher(
-            "no-stops",
-            Arc::new(ScriptedFetcher::new(vec![response_with_arrival("15", 5)])),
-        );
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/arrivals")
-                    .header("authorization", format!("Bearer {token}"))
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let (t, token) = scripted("arrivals-no-stops", vec![response_with_arrival("15", 5)]);
+        let response = t.send(bearer_req("GET", "/v1/arrivals", &token)).await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .expect("read body")
-            .to_bytes();
-        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("parse body");
+        let body = json_body(response).await;
         assert!(body.get("error").and_then(|v| v.as_str()).is_some());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn malformed_stops_param_is_400() {
-        let (state, token, dir) = tmp_state_with_fetcher(
-            "bad-stops",
-            Arc::new(ScriptedFetcher::new(vec![response_with_arrival("15", 5)])),
-        );
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/arrivals?stops=nope")
-                    .header("authorization", format!("Bearer {token}"))
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let (t, token) = scripted("arrivals-bad-stops", vec![response_with_arrival("15", 5)]);
+        let response = t
+            .send(bearer_req("GET", "/v1/arrivals?stops=nope", &token))
+            .await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Read SSE frames off `body` until `parser` dispatches `want` many
@@ -490,25 +425,20 @@ mod handler_tests {
 
     #[tokio::test]
     async fn identical_responses_yield_one_event_then_a_change_yields_a_second() {
-        let fetcher = Arc::new(ScriptedFetcher::new(vec![
-            response_with_arrival("15", 5),
-            response_with_arrival("15", 5),
-            response_with_arrival("15", 9),
-            response_with_arrival("15", 9),
-            response_with_arrival("15", 9),
-        ]));
-        let (state, token, dir) = tmp_state_with_fetcher("change-gate", fetcher);
+        let (t, token) = scripted(
+            "arrivals-change-gate",
+            vec![
+                response_with_arrival("15", 5),
+                response_with_arrival("15", 5),
+                response_with_arrival("15", 9),
+                response_with_arrival("15", 9),
+                response_with_arrival("15", 9),
+            ],
+        );
 
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/arrivals?stops=83139:15")
-                    .header("authorization", format!("Bearer {token}"))
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("router response");
+        let response = t
+            .send(bearer_req("GET", "/v1/arrivals?stops=83139:15", &token))
+            .await;
         assert_eq!(response.status(), StatusCode::OK);
         let mut body = response.into_body();
 
@@ -522,7 +452,5 @@ mod handler_tests {
         );
         assert_eq!(events[0].items.first().map(|i| i.minutes), Some(5));
         assert_eq!(events[1].items.first().map(|i| i.minutes), Some(9));
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

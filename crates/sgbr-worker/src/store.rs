@@ -1,13 +1,13 @@
-//! Atomic JSON device/invite store — mirrors
-//! `sgbr_core::bus_catalog::store`'s temp-file+rename approach. **Only token
-//! hashes touch disk**; the raw bearer token is returned once, at
+//! Atomic JSON device/invite store (via `sgbr_core::json_file`). **Only
+//! token hashes touch disk**; the raw bearer token is returned once, at
 //! registration, and never persisted.
 
-use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
+use sgbr_core::error::CoreError;
+use sgbr_core::json_file;
 use thiserror::Error;
 use time::OffsetDateTime;
 
@@ -52,6 +52,22 @@ pub enum StoreError {
     InviteUsed,
 }
 
+impl From<CoreError> for StoreError {
+    fn from(err: CoreError) -> Self {
+        match err {
+            CoreError::Parse(msg) => Self::Serde(msg),
+            CoreError::Io(msg) => Self::Io(msg),
+            // `json_file` only produces the two above; anything else would be
+            // a new core variant and is surfaced verbatim as an IO failure.
+            CoreError::Http(_)
+            | CoreError::NoArrival
+            | CoreError::InvalidTimestamp(_)
+            | CoreError::Auth(_)
+            | CoreError::Crypto(_) => Self::Io(err.to_string()),
+        }
+    }
+}
+
 /// Invite-code alphabet: uppercase letters and digits, minus the visually
 /// confusable `I`, `L`, `O`, `0`, `1`.
 const INVITE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -72,8 +88,7 @@ impl DeviceStore {
     /// be read or parsed.
     pub fn load_or_default(path: PathBuf) -> Result<Self, StoreError> {
         let data = if path.exists() {
-            let bytes = fs::read(&path).map_err(|e| StoreError::Io(e.to_string()))?;
-            serde_json::from_slice(&bytes).map_err(|e| StoreError::Serde(e.to_string()))?
+            json_file::load(&path)?
         } else {
             StoreData::default()
         };
@@ -87,15 +102,24 @@ impl DeviceStore {
         self.data.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Apply `mutate` to a copy of the live data, persist that copy, and only
+    /// then make it live — so a failed write leaves memory and disk in
+    /// agreement instead of handing out a token (or consuming an invite) that
+    /// the next restart forgets.
+    fn commit<T>(
+        &self,
+        mutate: impl FnOnce(&mut StoreData) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        let mut data = self.lock();
+        let mut next = data.clone();
+        let out = mutate(&mut next)?;
+        self.persist(&next)?;
+        *data = next;
+        Ok(out)
+    }
+
     fn persist(&self, data: &StoreData) -> Result<(), StoreError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|e| StoreError::Io(e.to_string()))?;
-        }
-        let bytes = serde_json::to_vec(data).map_err(|e| StoreError::Serde(e.to_string()))?;
-        let tmp = self.path.with_extension("json.tmp");
-        fs::write(&tmp, &bytes).map_err(|e| StoreError::Io(e.to_string()))?;
-        fs::rename(&tmp, &self.path).map_err(|e| StoreError::Io(e.to_string()))?;
-        Ok(())
+        Ok(json_file::save(data, &self.path)?)
     }
 
     /// Mint a fresh invite code and persist it.
@@ -109,9 +133,10 @@ impl DeviceStore {
             created_at_unix: now_unix(),
             used_by: None,
         };
-        let mut data = self.lock();
-        data.invites.push(rec.clone());
-        self.persist(&data)?;
+        self.commit(|data| {
+            data.invites.push(rec.clone());
+            Ok(())
+        })?;
         Ok(rec)
     }
 
@@ -140,24 +165,25 @@ impl DeviceStore {
         let device_id = random_hex(8)?;
         let token = random_hex(32)?;
         let token_sha256 = token_hash(&token);
-        let mut data = self.lock();
-        let invite = data
-            .invites
-            .iter_mut()
-            .find(|i| i.code == invite_code)
-            .ok_or(StoreError::UnknownInvite)?;
-        if invite.used_by.is_some() {
-            return Err(StoreError::InviteUsed);
-        }
-        invite.used_by = Some(device_id.clone());
-        data.devices.push(DeviceRec {
-            device_id: device_id.clone(),
-            pubkey_b64: pubkey_b64.to_owned(),
-            token_sha256,
-            invite_code: invite_code.to_owned(),
-            created_at_unix: now_unix(),
-        });
-        self.persist(&data)?;
+        self.commit(|data| {
+            let invite = data
+                .invites
+                .iter_mut()
+                .find(|i| i.code == invite_code)
+                .ok_or(StoreError::UnknownInvite)?;
+            if invite.used_by.is_some() {
+                return Err(StoreError::InviteUsed);
+            }
+            invite.used_by = Some(device_id.clone());
+            data.devices.push(DeviceRec {
+                device_id: device_id.clone(),
+                pubkey_b64: pubkey_b64.to_owned(),
+                token_sha256,
+                invite_code: invite_code.to_owned(),
+                created_at_unix: now_unix(),
+            });
+            Ok(())
+        })?;
         Ok((device_id, token))
     }
 
@@ -167,14 +193,13 @@ impl DeviceStore {
     /// # Errors
     /// [`StoreError::Io`] / [`StoreError::Serde`] on persist failure.
     pub fn revoke_device(&self, device_id: &str) -> Result<bool, StoreError> {
-        let mut data = self.lock();
-        let before = data.devices.len();
-        data.devices.retain(|d| d.device_id != device_id);
-        let changed = data.devices.len() != before;
-        if changed {
-            self.persist(&data)?;
+        if !self.lock().devices.iter().any(|d| d.device_id == device_id) {
+            return Ok(false);
         }
-        Ok(changed)
+        self.commit(|data| {
+            data.devices.retain(|d| d.device_id != device_id);
+            Ok(true)
+        })
     }
 
     /// Look up a device by its token's sha256 hex hash.
@@ -202,25 +227,22 @@ fn random_hex(n_bytes: usize) -> Result<String, StoreError> {
 /// regardless of whether the alphabet size divides 256.
 fn generate_invite_code() -> Result<String, StoreError> {
     let alphabet_len = INVITE_ALPHABET.len();
+    // Bytes at or past the largest multiple of the alphabet size are rejected,
+    // so `b % alphabet_len` is uniform even though 31 does not divide 256.
     let cutoff = 256 - (256 % alphabet_len);
-    let mut indices = Vec::with_capacity(INVITE_LEN);
+    let mut code = String::with_capacity(INVITE_LEN);
     let mut buf = [0_u8; 1];
-    while indices.len() < INVITE_LEN {
+    while code.len() < INVITE_LEN {
         getrandom::fill(&mut buf).map_err(|e| StoreError::Rng(e.to_string()))?;
         let b = usize::from(buf[0]);
-        if b < cutoff {
-            indices.push(b % alphabet_len);
+        if b >= cutoff {
+            continue;
+        }
+        if let Some(&byte) = INVITE_ALPHABET.get(b % alphabet_len) {
+            code.push(char::from(byte));
         }
     }
-    indices
-        .into_iter()
-        .map(|idx| {
-            INVITE_ALPHABET
-                .get(idx)
-                .map(|&byte| byte as char)
-                .ok_or_else(|| StoreError::Rng("alphabet index out of range".to_owned()))
-        })
-        .collect()
+    Ok(code)
 }
 
 #[cfg(test)]
@@ -351,6 +373,45 @@ mod tests {
         assert!(store.list_devices().is_empty());
         assert!(!store.revoke_device(&device_id).expect("revoke again"));
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// A store whose `persist` always fails: its parent "directory" is a
+    /// regular file, so `create_dir_all` errors before anything is written.
+    fn unwritable_store(name: &str) -> DeviceStore {
+        let blocker = tmp_path(name);
+        std::fs::write(&blocker, b"not a directory").expect("write blocker file");
+        DeviceStore::load_or_default(blocker.join("store.json")).expect("load empty")
+    }
+
+    #[test]
+    fn failed_persist_does_not_mint_an_invite_in_memory() {
+        let store = unwritable_store("persist-fail-mint");
+        assert!(matches!(store.mint_invite(), Err(super::StoreError::Io(_))));
+        assert!(store.list_invites().is_empty(), "invite leaked into memory");
+    }
+
+    #[test]
+    fn failed_persist_rolls_back_registration() {
+        let path = tmp_path("persist-fail-register");
+        let _ = std::fs::remove_file(&path);
+        let store = DeviceStore::load_or_default(path.clone()).expect("load empty");
+        let invite = store.mint_invite().expect("mint");
+        // Make the next write fail: replace the store file with a directory so
+        // the temp-file write inside `persist` errors.
+        std::fs::remove_file(&path).expect("remove store file");
+        std::fs::create_dir_all(path.with_extension("json.tmp")).expect("block tmp path");
+
+        let err = store
+            .register_device(&invite.code, "pubkey-b64")
+            .expect_err("persist must fail");
+        assert!(matches!(err, super::StoreError::Io(_)), "got {err:?}");
+        assert!(store.list_devices().is_empty(), "device leaked into memory");
+        assert_eq!(
+            store.list_invites().first().and_then(|i| i.used_by.clone()),
+            None,
+            "invite must not be consumed when persist fails"
+        );
+        let _ = std::fs::remove_dir_all(path.with_extension("json.tmp"));
     }
 
     #[test]
