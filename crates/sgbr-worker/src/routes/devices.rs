@@ -199,7 +199,7 @@ mod tests {
         let t = TestState::new("devices-malformed-json");
         let response = post_raw_json(&t, "{not json").await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        assert!(!assert_error_envelope(response).await.is_empty());
+        assert_ne!(assert_error_envelope(response).await, "");
     }
 
     #[tokio::test]
@@ -212,7 +212,7 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        assert!(!assert_error_envelope(response).await.is_empty());
+        assert_ne!(assert_error_envelope(response).await, "");
     }
 
     #[tokio::test]

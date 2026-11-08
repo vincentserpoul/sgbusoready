@@ -370,7 +370,7 @@ mod tests {
             .expect("register");
 
         assert!(store.revoke_device(&device_id).expect("revoke"));
-        assert!(store.list_devices().is_empty());
+        assert_eq!(store.list_devices().len(), 0);
         assert!(!store.revoke_device(&device_id).expect("revoke again"));
         let _ = std::fs::remove_file(&path);
     }

@@ -178,7 +178,7 @@ mod tests {
     fn active_empty_when_none_live() {
         let list = vec![morning(), evening()];
         let active = active_commutes_at(&list, datetime!(2026-06-22 12:00:00 +8));
-        assert!(active.is_empty());
+        assert_eq!(active.len(), 0);
     }
 
     #[test]
@@ -248,7 +248,7 @@ mod tests {
     fn active_stop_plans_empty_when_inactive() {
         let list = vec![two_stop_morning()];
         let plans = super::active_stop_plans(&list, datetime!(2026-06-22 12:00:00 +8));
-        assert!(plans.is_empty());
+        assert_eq!(plans.len(), 0);
     }
 
     #[test]

@@ -75,7 +75,7 @@ mod tests {
     #[test]
     fn comment_lines_produce_no_event() {
         let events = feed(&[": this is a comment", ""]);
-        assert!(events.is_empty());
+        assert_eq!(events.len(), 0);
     }
 
     #[test]
@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn blank_line_without_data_dispatches_nothing() {
         let events = feed(&["event: arrivals", ""]);
-        assert!(events.is_empty());
+        assert_eq!(events.len(), 0);
     }
 
     #[test]

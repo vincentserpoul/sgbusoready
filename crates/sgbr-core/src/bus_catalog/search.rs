@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn empty_query_returns_nothing() {
-        assert!(search(&catalog(), "  ", 10).is_empty());
+        assert_eq!(search(&catalog(), "  ", 10).len(), 0);
     }
 
     #[test]
@@ -89,6 +89,6 @@ mod tests {
     #[test]
     fn limit_zero_returns_empty() {
         let cat = catalog();
-        assert!(search(&cat, "clementi", 0).is_empty());
+        assert_eq!(search(&cat, "clementi", 0).len(), 0);
     }
 }

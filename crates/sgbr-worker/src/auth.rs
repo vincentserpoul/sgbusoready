@@ -1,6 +1,7 @@
 //! Bearer-token device auth and admin-token guard.
 
 use std::fmt::Write as _;
+use std::future::ready;
 
 use axum::extract::FromRequestParts;
 use axum::http::header::AUTHORIZATION;
@@ -36,13 +37,11 @@ pub struct Device {
     pub device_id: String,
 }
 
-impl FromRequestParts<AppState> for Device {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &AppState,
-    ) -> Result<Self, Self::Rejection> {
+impl Device {
+    /// Resolve the bearer token in `parts` to a registered device. Synchronous:
+    /// the store lookup never suspends, so the extractor wraps this in
+    /// [`ready`] rather than paying for an `async` state machine.
+    fn authenticate(parts: &Parts, state: &AppState) -> Result<Self, ApiError> {
         let token = parts
             .headers
             .get(AUTHORIZATION)
@@ -60,17 +59,25 @@ impl FromRequestParts<AppState> for Device {
     }
 }
 
+impl FromRequestParts<AppState> for Device {
+    type Rejection = ApiError;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        ready(Self::authenticate(parts, state))
+    }
+}
+
 /// Proof the caller supplied the correct `X-Admin-Token`.
 #[derive(Debug, Clone, Copy)]
 pub struct Admin;
 
-impl FromRequestParts<AppState> for Admin {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &AppState,
-    ) -> Result<Self, Self::Rejection> {
+impl Admin {
+    /// Check `X-Admin-Token` against the configured secret. Synchronous for
+    /// the same reason as [`Device::authenticate`].
+    fn authenticate(parts: &Parts, state: &AppState) -> Result<Self, ApiError> {
         let provided = parts
             .headers
             .get("X-Admin-Token")
@@ -81,6 +88,17 @@ impl FromRequestParts<AppState> for Admin {
         } else {
             Err(ApiError::Unauthorized)
         }
+    }
+}
+
+impl FromRequestParts<AppState> for Admin {
+    type Rejection = ApiError;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        ready(Self::authenticate(parts, state))
     }
 }
 

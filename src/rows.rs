@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn empty_lane_reports_one_row() {
         let (rows, count) = stagger_rows(&[], 30);
-        assert!(rows.is_empty());
+        assert_eq!(rows.len(), 0);
         assert_eq!(count, 1);
     }
 }

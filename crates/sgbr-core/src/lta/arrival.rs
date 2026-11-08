@@ -253,7 +253,7 @@ mod arrival_items_tests {
         let resp: BusArrivalResponse = serde_json::from_str(SAMPLE).expect("parse");
         let now = datetime!(2026-06-21 08:10:00 +8);
         let tracked = vec!["77".to_owned()];
-        assert!(arrival_items(&tracked, &resp, now).is_empty());
+        assert_eq!(arrival_items(&tracked, &resp, now).len(), 0);
     }
 }
 

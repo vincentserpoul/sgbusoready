@@ -385,7 +385,7 @@ mod tests {
     #[test]
     fn items_for_unknown_stop_is_empty() {
         let feed = fresh();
-        assert!(feed.items_for("nope").is_empty());
+        assert_eq!(feed.items_for("nope").len(), 0);
     }
 
     #[test]

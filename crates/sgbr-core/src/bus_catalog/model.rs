@@ -75,7 +75,7 @@ mod tests {
         );
         assert!(c.stop("00000").is_none());
         assert_eq!(c.services("83139"), &["15".to_owned(), "52".to_owned()]);
-        assert!(c.services("00000").is_empty());
+        assert_eq!(c.services("00000").len(), 0);
     }
 
     #[test]
