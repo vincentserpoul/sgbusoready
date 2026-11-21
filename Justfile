@@ -7,6 +7,14 @@ worker_image := "ghcr.io/vincentserpoul/sgbr-worker:latest"
 default:
     @just --list
 
+# One-time setup after cloning: install the git hooks (pre-commit and commit-msg)
+setup:
+    prek install
+
+# Run every pre-commit hook against the whole repo (same as the CI hooks job)
+hooks:
+    prek run --all-files
+
 # Format all code with cargo fmt (stable; toolchain is pinned in rust-toolchain.toml)
 fmt:
     cargo fmt --all
@@ -15,14 +23,13 @@ fmt:
 fmt-check:
     cargo fmt --all -- --check
 
-# Run clippy on the entire workspace (lints live in Cargo.toml [workspace.lints];
-# the explicit flags mirror CI and keep parity if the table is ever loosened)
+# Run clippy on the entire workspace (same command as CI; lint levels live in Cargo.toml)
 clippy:
-    cargo clippy --workspace --all-targets -- -D warnings -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic -D clippy::todo -D clippy::unimplemented -W clippy::cognitive_complexity
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Run clippy and auto-fix where possible
 clippy-fix:
-    cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings
 
 # Build the workspace (host)
 build:
@@ -55,7 +62,7 @@ clippy-android:
     #!/usr/bin/env bash
     set -euo pipefail
     source android/.env.build
-    cargo ndk -t arm64-v8a clippy --lib -- -D warnings -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
+    cargo ndk -t arm64-v8a clippy --lib -- -D warnings
 
 # Build the cdylib, assemble the debug APK, install on a connected device and launch.
 run-android: build-android
@@ -117,9 +124,9 @@ check:
 doc:
     cargo doc --workspace --no-deps --open
 
-# Check docs build without warnings
+# Check docs build without warnings (same command as CI)
 doc-check:
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --quiet
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --quiet
 
 # Run cargo audit for known vulnerabilities
 audit:

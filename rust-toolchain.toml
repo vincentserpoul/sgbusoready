@@ -1,3 +1,5 @@
+# Single source of truth for the Rust version: CI installs from this file
+# (`rustup toolchain install`), so bump it here and nowhere else.
 [toolchain]
 channel = "1.100.0"
 components = ["clippy", "rustfmt", "rust-src"]

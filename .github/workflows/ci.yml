@@ -1,6 +1,9 @@
 ---
 # CI Pipeline
-# Runs build, lint and tests on every PR and push to main.
+# Runs build, lint and tests on every PR and push to main
+
+# The Rust version, components and targets come from rust-toolchain.toml:
+# `rustup toolchain install` with no arguments installs exactly that.
 
 name: CI
 
@@ -16,7 +19,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_TOOLCHAIN: 1.100.0
   RUSTFLAGS: -D warnings
 
 jobs:
@@ -27,20 +29,12 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install Linux UI deps (fontconfig for the Slint desktop build)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
-
       - name: Install Rust
-        run: |
-          rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" \
-            --profile minimal \
-            --component rustfmt
-          rustup default "${{ env.RUST_TOOLCHAIN }}"
+        run: rustup toolchain install
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -52,79 +46,75 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install Linux UI deps (fontconfig for the Slint desktop build)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev pkg-config
 
       - name: Install Rust
-        run: |
-          rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" \
-            --profile minimal \
-            --component clippy
-          rustup default "${{ env.RUST_TOOLCHAIN }}"
+        run: rustup toolchain install
 
       - name: Setup Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
+      # Same command as `just clippy`. Lint levels live in [workspace.lints]
+      # in Cargo.toml; -D warnings turns every one of them into an error.
       - name: Run Clippy
-        run: |
-          cargo clippy --workspace --all-targets --all-features -- \
-            -D warnings \
-            -D clippy::unwrap_used \
-            -D clippy::expect_used \
-            -D clippy::panic \
-            -D clippy::todo \
-            -D clippy::unimplemented \
-            -W clippy::cognitive_complexity
+        run: >-
+          cargo clippy --workspace --all-targets --all-features
+          -- -D warnings
 
   # ============================================================================
-  # DEPENDENCY CHECKS
+  # PRE-COMMIT HOOKS
   # ============================================================================
-  deps:
-    name: Dependency Checks
+  # Runs every hook from .pre-commit-config.yaml (typos, taplo, yamllint,
+  # actionlint, zizmor, gitleaks, ...) so they are enforced even when a
+  # contributor has not run `just setup`.
+  hooks:
+    name: Pre-commit Hooks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install Linux UI deps (fontconfig for the Slint desktop build)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
+      - name: Run hooks
+        uses: j178/prek-action@7b101f8338a08d2bd6fdb3625e4e7692428763a3 # v3.1.1
+        env:
+          # Covered by the Format and Clippy jobs, which have the system
+          # libraries these two need.
+          SKIP: cargo-fmt,cargo-clippy
 
-      - name: Install Rust
-        run: |
-          rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" --profile minimal
-          rustup default "${{ env.RUST_TOOLCHAIN }}"
-
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@7a562dfa955aa2e4d5b0fd6ebd57ff9715c07b0b # v2.73.0
+  # ============================================================================
+  # UNUSED DEPENDENCIES
+  # ============================================================================
+  # Licenses and advisories (cargo-deny, cargo-audit) run in security.yml.
+  deps:
+    name: Unused Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          tool: cargo-deny
+          persist-credentials: false
 
       - name: Install cargo-machete
-        uses: taiki-e/install-action@7a562dfa955aa2e4d5b0fd6ebd57ff9715c07b0b # v2.73.0
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-machete
-
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-
-      - name: Check licenses and advisories
-        run: cargo deny check
 
       - name: Check unused dependencies
         run: cargo machete
 
   # ============================================================================
-  # BUILD & TEST (host platforms — the pure-Rust core + logic)
-  # Mobile cross-builds (Android NDK / iOS Xcode) are wired in once the
-  # ui/bridge crates land; see the design doc.
+  # BUILD & TEST (host platforms)
   # ============================================================================
+  # Android-only code (cfg(target_os = "android")) needs the NDK and is
+  # linted locally with `just clippy-android`.
   build:
     name: Build & Test
     runs-on: ${{ matrix.os }}
@@ -133,27 +123,32 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install Linux UI deps (fontconfig for the Slint desktop build)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev pkg-config
 
       - name: Install Rust
-        run: |
-          rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" --profile minimal
-          rustup default "${{ env.RUST_TOOLCHAIN }}"
+        run: rustup toolchain install
 
       - name: Setup Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
+      # --workspace is required: the root manifest is itself a package, so
+      # without it cargo would build and test only the app crate.
       - name: Build workspace
-        run: cargo build --all-targets
+        run: cargo build --workspace --all-targets --all-features
 
       - name: Run tests
-        run: cargo test --all-targets
+        run: cargo test --workspace --all-targets --all-features
+
+      - name: Run doctests
+        run: cargo test --workspace --all-features --doc
 
   # ============================================================================
   # CODE COVERAGE
@@ -161,32 +156,32 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+    environment:
+      name: ci
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install Linux UI deps (fontconfig for the Slint desktop build)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev pkg-config
 
       - name: Install Rust
-        run: |
-          rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" \
-            --profile minimal \
-            --component llvm-tools-preview
-          rustup default "${{ env.RUST_TOOLCHAIN }}"
+        run: rustup toolchain install
 
       - name: Setup Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@7a562dfa955aa2e4d5b0fd6ebd57ff9715c07b0b # v2.73.0
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-llvm-cov
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@7a562dfa955aa2e4d5b0fd6ebd57ff9715c07b0b # v2.73.0
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-nextest
 
@@ -195,11 +190,12 @@ jobs:
           mkdir -p coverage
           cargo llvm-cov nextest \
             --workspace \
+            --all-features \
             --codecov \
             --output-path coverage/codecov.json
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: coverage/codecov.json
           fail_ci_if_error: false
@@ -213,23 +209,65 @@ jobs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install Linux UI deps (fontconfig for the Slint desktop build)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev pkg-config
 
       - name: Install Rust
-        run: |
-          rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" --profile minimal
-          rustup default "${{ env.RUST_TOOLCHAIN }}"
+        run: rustup toolchain install
 
       - name: Setup Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Build documentation
         run: cargo doc --workspace --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -D warnings
+
+  # ============================================================================
+  # MUTATION TESTING (manual trigger only — runs every test for every mutation)
+  # ============================================================================
+  mutants:
+    name: Mutation Testing
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install Linux UI deps (fontconfig for the Slint desktop build)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev pkg-config
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-mutants
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-nextest
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      # The app crate is excluded: it is mostly Slint glue, exercised
+      # through the UI rather than by unit tests.
+      - name: Run mutation testing
+        run: >-
+          cargo mutants --workspace --exclude sgbusoready
+          -- --test-threads=4

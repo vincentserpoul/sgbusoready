@@ -15,8 +15,4 @@ useDefault = true
 
 # Paths to ignore (build artifacts, lockfiles)
 [allowlist]
-paths = [
-  '''target/''',
-  '''\.git/''',
-  '''Cargo\.lock''',
-]
+paths = ['''target/''', '''\.git/''', '''Cargo\.lock''']

@@ -32,7 +32,7 @@ fn day_flags(commute: &Commute) -> Vec<bool> {
     .collect()
 }
 
-/// "next <Day> HH:MM" for an inactive card, or empty if there is no next window.
+/// `next <Day> HH:MM` for an inactive card, or empty if there is no next window.
 fn next_time_line(commute: &Commute, now: OffsetDateTime) -> String {
     commute
         .next_window_start(now)

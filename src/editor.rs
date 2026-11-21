@@ -90,8 +90,7 @@ fn set_days(window: &AppWindow, days: Weekdays) {
 
 /// The services at `code` from the catalog (empty when unavailable).
 pub fn stop_services(catalog: Option<&BusCatalog>, code: &str) -> Vec<String> {
-    catalog
-        .map_or_default(|c| c.services(code).iter().map(ToString::to_string).collect())
+    catalog.map_or_default(|c| c.services(code).iter().map(ToString::to_string).collect())
 }
 
 /// Populate the editor form from an existing commute (edit) or reset it (new).

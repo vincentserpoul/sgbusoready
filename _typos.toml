@@ -1,8 +1,12 @@
 # typos configuration — https://github.com/crate-ci/typos
 
 [files]
-extend-exclude = []
+# cargo-vet store: crate names such as `flate2` are not typos
+extend-exclude = [".supply-chain/"]
 
 [default.extend-identifiers]
+# Plural acronyms, which typos splits into a bogus two-letter word
+NDKs = "NDKs"
+PNGs = "PNGs"
 
 [default.extend-words]

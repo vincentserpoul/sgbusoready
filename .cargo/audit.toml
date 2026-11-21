@@ -1,0 +1,7 @@
+# cargo-audit configuration
+# https://docs.rs/cargo-audit/latest/cargo_audit/config/index.html
+
+[advisories]
+# No advisories are currently ignored. List a RUSTSEC id here, with a comment
+# saying why it does not apply and when it can be removed.
+ignore = []

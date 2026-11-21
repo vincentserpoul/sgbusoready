@@ -1,8 +1,11 @@
 [package]
 name = "sgbr-core"
-version = "0.1.0"
-edition = "2024"
-license = "GPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core library for SG Bus Ready - LTA DataMall client, bus catalog, commute model and worker protocol"
 
 # Direct `DataMall` access (`lta::client`, `bus_catalog::fetch`). Off by
 # default: the shipped app talks to the worker instead (see

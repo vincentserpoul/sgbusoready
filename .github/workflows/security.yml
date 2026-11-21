@@ -1,6 +1,9 @@
 ---
 # Security CI Pipeline
-# Runs security checks on every PR and weekly on main.
+# Runs security checks on every PR and weekly on main
+
+# The Rust version, components and targets come from rust-toolchain.toml:
+# `rustup toolchain install` with no arguments installs exactly that.
 
 name: Security
 
@@ -20,7 +23,6 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
-  RUST_TOOLCHAIN: 1.100.0
 
 jobs:
   # ============================================================================
@@ -30,17 +32,15 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install Rust
-        run: |
-          rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" --profile minimal
-          rustup default "${{ env.RUST_TOOLCHAIN }}"
+        run: rustup toolchain install
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@7a562dfa955aa2e4d5b0fd6ebd57ff9715c07b0b # v2.73.0
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-audit
 
@@ -48,64 +48,26 @@ jobs:
         run: cargo audit
 
   # ============================================================================
-  # CARGO DENY (Licenses, Bans, Advisories, Sources)
+  # CARGO DENY (Licenses, Bans, Advisories)
   # ============================================================================
   deny:
     name: Cargo Deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install Rust
-        run: |
-          rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" --profile minimal
-          rustup default "${{ env.RUST_TOOLCHAIN }}"
+        run: rustup toolchain install
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@7a562dfa955aa2e4d5b0fd6ebd57ff9715c07b0b # v2.73.0
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-deny
 
-      - name: Check advisories
-        run: cargo deny check advisories
-
-      - name: Check licenses
-        run: cargo deny check licenses
-
-      - name: Check bans
-        run: cargo deny check bans
-
-      - name: Check sources
-        run: cargo deny check sources
-
-  # ============================================================================
-  # UNSAFE CODE AUDIT
-  # Especially relevant here: the iOS/Android FFI bridges are the only place
-  # `unsafe` is allowed. geiger keeps that surface visible.
-  # ============================================================================
-  geiger:
-    name: Unsafe Code Audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-
-      - name: Install Rust
-        run: |
-          rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" --profile minimal
-          rustup default "${{ env.RUST_TOOLCHAIN }}"
-
-      - name: Install cargo-geiger
-        uses: taiki-e/install-action@7a562dfa955aa2e4d5b0fd6ebd57ff9715c07b0b # v2.73.0
-        with:
-          tool: cargo-geiger
-
-      - name: Run cargo geiger
-        run: cargo geiger --all-features --all-targets
-        continue-on-error: true  # Report, don't fail the build
+      - name: Check advisories, licenses, bans and sources
+        run: cargo deny check
 
   # ============================================================================
   # SECRET DETECTION
@@ -114,55 +76,30 @@ jobs:
     name: Secret Detection
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0  # Full history for scanning
 
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ============================================================================
-  # OUTDATED DEPENDENCIES (informational)
-  # ============================================================================
-  outdated:
-    name: Check Outdated Dependencies
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-
-      - name: Install Rust
-        run: |
-          rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" --profile minimal
-          rustup default "${{ env.RUST_TOOLCHAIN }}"
-
-      - name: Install cargo-outdated
-        uses: taiki-e/install-action@7a562dfa955aa2e4d5b0fd6ebd57ff9715c07b0b # v2.73.0
-        with:
-          tool: cargo-outdated
-
-      - name: Check outdated
-        run: cargo outdated --root-deps-only
-        continue-on-error: true  # Informational only
-
-  # ============================================================================
-  # FILESYSTEM / CONFIG VULNERABILITY SCAN
+  # Trivy
   # ============================================================================
   trivy-security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Run Trivy vulnerability scanner (filesystem)
         # yamllint disable-line rule:line-length
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -173,7 +110,7 @@ jobs:
 
       - name: Run Trivy vulnerability scanner (config)
         # yamllint disable-line rule:line-length
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: 'config'
           scan-ref: '.'

@@ -4569,7 +4569,6 @@ dependencies = [
  "jni 0.22.4",
  "log",
  "ndk-context",
- "serde_json",
  "sgbr-core",
  "slint",
  "slint-build",

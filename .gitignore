@@ -17,3 +17,18 @@
 # Visual brainstorming companion scratch files
 /.superpowers/
 .superpowers/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and coverage profiles
+*.log
+*.profraw

@@ -1,8 +1,11 @@
 [package]
 name = "sgbr-worker"
-version = "0.1.0"
-edition = "2024"
-license = "GPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Backend worker for SG Bus Ready - proxies LTA DataMall and streams arrivals to the app"
 
 [lints]
 workspace = true

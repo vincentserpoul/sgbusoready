@@ -29,7 +29,7 @@ impl CommuteStore {
     }
 
     /// Load the store from `path`. A missing file yields an empty store (the
-    /// natural first-run state); a present-but-unparseable file is an error.
+    /// natural first-run state); a present-but-unparsable file is an error.
     pub fn load(path: &Path) -> Result<Self, CoreError> {
         match fs::read_to_string(path) {
             Ok(json) => Self::from_json(&json),

@@ -1,0 +1,5 @@
+# gitlint configuration — https://jorisroovers.com/gitlint/
+[general]
+# B6 (body-is-missing): one-line commits are normal here, e.g.
+# `chore: update deps`.
+ignore=body-is-missing

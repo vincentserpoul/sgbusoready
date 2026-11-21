@@ -1,5 +1,9 @@
 ---
 
+# `prek install` (see `just setup`) installs both hook types; the commit-msg
+# one is what runs the conventional-commit and gitlint checks.
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
   ##############################################################################
   #  General checks
