@@ -36,8 +36,7 @@ fn day_flags(commute: &Commute) -> Vec<bool> {
 fn next_time_line(commute: &Commute, now: OffsetDateTime) -> String {
     commute
         .next_window_start(now)
-        .map(format_next_time)
-        .unwrap_or_default()
+        .map_or_default(format_next_time)
 }
 
 /// "N stops · M buses" for an inactive card.

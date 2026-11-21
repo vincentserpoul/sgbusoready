@@ -466,8 +466,8 @@ export component StopEditorCard inherits Rectangle {
         }
         Flickable {
             height: 46px;
-            viewport-width: row.preferred-width;
-            viewport-height: self.height;
+            content-width: row.preferred-width;
+            content-height: self.height;
             row := HorizontalLayout {
                 spacing: 8px;
                 for svc[i] in root.services: Chip {

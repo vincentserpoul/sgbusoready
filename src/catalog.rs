@@ -42,7 +42,7 @@ pub fn catalog_path(store_path: &Path) -> PathBuf {
 pub fn refresh_search(window: &AppWindow, catalog: &Catalog) {
     let query = window.get_search_query().to_string();
     let results: Vec<StopResult> = with_catalog(catalog, |cat| {
-        cat.map(|k| {
+        cat.map_or_default(|k| {
             catalog_search(k, &query, 30)
                 .into_iter()
                 .map(|s| StopResult {
@@ -52,7 +52,6 @@ pub fn refresh_search(window: &AppWindow, catalog: &Catalog) {
                 })
                 .collect()
         })
-        .unwrap_or_default()
     });
     window.set_search_results(ModelRc::new(VecModel::from(results)));
     window.set_catalog_loading(with_catalog(catalog, |c| c.is_none()));
